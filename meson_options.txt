@@ -1,0 +1,6 @@
+option(
+	'enable-early-boot',
+	type: 'boolean',
+	value: false,
+	description: 'Early boot weston'
+)
