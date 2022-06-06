@@ -49,6 +49,10 @@
 *    AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
 *    ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 *    THIS SOFTWARE.
+*
+*    Changes from Qualcomm Innovation Center are provided under the following license:
+*    Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+*    SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 
@@ -59,7 +63,7 @@
 #include "gbm-buffer-backend.h"
 #include "gbm-buffer-backend-server-protocol.h"
 #include "gbm_priv.h"
-#include "libweston-internal.h"
+#include <libweston-private/libweston-internal.h>
 
 static void
 gbm_buffer_destroy_params(struct wl_resource *params_resource);
@@ -172,7 +176,7 @@ err_out:
 	wl_resource_post_no_memory(gbmbuf_resource);
 }
 
-WL_EXPORT struct gbm_buffer *
+static struct gbm_buffer *
 gbm_buffer_get(struct wl_resource *resource)
 {
 	struct gbm_buffer *buffer;
@@ -195,7 +199,8 @@ gbm_buffer_get(struct wl_resource *resource)
 	return buffer;
 }
 
-WL_EXPORT bool is_yuv_format(uint32_t fmt)
+static bool
+is_yuv_format(uint32_t fmt)
 {
 	bool is_yuv = false;
 
@@ -218,7 +223,8 @@ WL_EXPORT bool is_yuv_format(uint32_t fmt)
 	return is_yuv;
 }
 
-WL_EXPORT bool is_yuv_buffer(struct weston_buffer *buffer)
+static bool
+is_yuv_buffer(struct weston_buffer *buffer)
 {
 	bool is_yuv = false;
 	struct gbm_buffer *gbm_buffer;
@@ -366,18 +372,7 @@ bind_gbm_buffer_backend(struct wl_client *client,
 	GBM_PROTOCOL_LOG(LOG_DBG,"bind_gbm_buffer_backend::Exited\n");
 }
 
-/** Advertise gbm_buffer_backend support
- *
- * Calling this initializes the gbm_buffer_backend protocol support, so that
- * the interface will be advertised to clients. Essentially it creates a
- * global. Do not call this function multiple times in the compositor's
- * lifetime. There is no way to deinit explicitly, globals will be reaped
- * when the wl_display gets destroyed.
- *
- * \param compositor The compositor to init for.
- * \return Zero on success, -1 on failure.
- */
-WL_EXPORT int
+static int
 gbm_buffer_backend_setup(struct weston_compositor *compositor)
 {
 	GBM_PROTOCOL_LOG(LOG_DBG,"gbm_buffer_backend_setup::Invoked\n");
@@ -391,24 +386,7 @@ gbm_buffer_backend_setup(struct weston_compositor *compositor)
 	return 0;
 }
 
-/** Set renderer-private data
- *
- * Set the user data for the gbm_buffer. It is invalid to overwrite
- * a non-NULL user data with a new non-NULL pointer. This is meant to
- * protect against renderers fighting over gbm_buffer user data
- * ownership.
- *
- * The renderer-private data is usually set from the
- * weston_renderer::import_gbm_buffer hook.
- *
- * \param buffer The gbm_buffer object to set for.
- * \param data The new renderer-private data pointer.
- * \param func Destructor function to be called for the renderer-private
- *             data when the gbm_buffer gets destroyed.
- *
- * \sa weston_compositor_import_gbm_buffer
- */
-WL_EXPORT void
+static void
 gbm_buffer_backend_set_user_data(struct gbm_buffer *buffer,
 		void *data,
 		gbm_buffer_user_data_destroy_func func)
@@ -419,38 +397,13 @@ gbm_buffer_backend_set_user_data(struct gbm_buffer *buffer,
 	buffer->user_data_destroy_func = func;
 }
 
-/** Get renderer-private data
- *
- * Get the user data from the gbm_buffer.
- *
- * \param buffer The gbm_buffer to query.
- * \return Renderer-private data pointer.
- *
- * \sa gbm_buffer_backend_get_user_data
- */
-WL_EXPORT void *
+static void *
 gbm_buffer_backend_get_user_data(struct gbm_buffer *buffer)
 {
 	return buffer->user_data;
 }
 
-/** Resolve an internal compositor error by disconnecting the client.
- *
- * This function is used in cases when the gbmbuf-based wl_buffer
- * turns out unusable and there is no fallback path. This is used by
- * renderers which are the fallback path in the first place.
- *
- * It is possible the fault is caused by a compositor bug, the underlying
- * graphics stack bug or normal behaviour, or perhaps a client mistake.
- * In any case, the options are to either composite garbage or nothing,
- * or disconnect the client. This is a helper function for the latter.
- *
- * The error is sent as a INVALID_OBJECT error on the client's wl_display.
- *
- * \param buffer The gbm_buffer that is unusable.
- * \param msg A custom error message attached to the protocol error.
- */
-WL_EXPORT void
+static void
 gbm_buffer_send_server_error(struct gbm_buffer *buffer,
 		const char *msg)
 {
@@ -469,3 +422,12 @@ gbm_buffer_send_server_error(struct gbm_buffer *buffer,
 			"gbmbuf server error with "
 			"wl_buffer@%u: %s", id, msg);
 }
+WL_EXPORT struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface = {
+	.setup = gbm_buffer_backend_setup,
+	.buffer_get = gbm_buffer_get,
+	.get_user_data = gbm_buffer_backend_get_user_data,
+	.set_user_data = gbm_buffer_backend_set_user_data,
+	.is_yuv_format = is_yuv_format,
+	.is_yuv_buffer = is_yuv_buffer,
+	.send_server_error = gbm_buffer_send_server_error,
+};

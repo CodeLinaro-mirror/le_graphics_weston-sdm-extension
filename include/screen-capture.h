@@ -25,6 +25,10 @@
 *    WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 *    OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 *    IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+*    Changes from Qualcomm Innovation Center are provided under the following license:
+*    Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+*    SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef WESTON_SCREEN_CAPTURE_H
@@ -46,21 +50,21 @@
 #define SC_DBG_STRING    "SC_DBG::"
 
 #define SC_PROTOCOL_LOG(level, ...) do {  \
-										if ((level) <= SC_MAX_DBG_LEVEL) { \
-											char *prefix = NULL; \
-											if(level==SC_LOG_FATAL) \
-												prefix = SC_FATAL_STRING; \
-											if(level==SC_LOG_ERR) \
-												prefix = SC_ERR_STRING; \
-											if(level==SC_LOG_WARN) \
-												prefix = SC_WARN_STRING; \
-											if(level==SC_LOG_INFO) \
-												prefix = SC_INFO_STRING; \
-											if(level==SC_LOG_DBG) \
-												prefix = SC_DBG_STRING; \
-											weston_log("%s%s(%d)::%s", prefix, __func__, __LINE__, __VA_ARGS__); \
-										} \
-									} while (0)
+	if ((level) <= SC_MAX_DBG_LEVEL) { \
+		char *prefix = NULL; \
+		if(level==SC_LOG_FATAL) \
+			prefix = SC_FATAL_STRING; \
+		if(level==SC_LOG_ERR) \
+			prefix = SC_ERR_STRING; \
+		if(level==SC_LOG_WARN) \
+			prefix = SC_WARN_STRING; \
+		if(level==SC_LOG_INFO) \
+			prefix = SC_INFO_STRING; \
+		if(level==SC_LOG_DBG) \
+			prefix = SC_DBG_STRING; \
+		weston_log("%s%s(%d)::%s", prefix, __func__, __LINE__, __VA_ARGS__); \
+	} \
+} while (0)
 
 
 struct screen_capture {
@@ -87,34 +91,38 @@ struct screen_capture_buffer {
 	struct weston_buffer_reference buf_ref;
 };
 
-/** Advertise screen capture support
- *
- * Calling this initializes the screen capture protocol support, so that
- * the interface will be advertised to clients. Essentially it creates a
- * global. Do not call this function multiple times in the compositor's
- * lifetime. There is no way to deinit explicitly, globals will be reaped
- * when the wl_display gets destroyed.
- *
- * \param compositor The compositor to init for.
- * \return Zero on success, -1 on failure.
- */
-int screen_capture_setup(struct weston_compositor *compositor);
+struct screen_capture_c_interface {
+	/** Advertise screen capture support
+	 *
+	 * Calling this initializes the screen capture protocol support, so that
+	 * the interface will be advertised to clients. Essentially it creates a
+	 * global. Do not call this function multiple times in the compositor's
+	 * lifetime. There is no way to deinit explicitly, globals will be reaped
+	 * when the wl_display gets destroyed.
+	 *
+	 * \param compositor The compositor to init for.
+	 * \return Zero on success, -1 on failure.
+	 */
+	int (*setup)(struct weston_compositor *compositor);
 
-/** Ensure if it is screen capture buffer or not
-*
-*\param buffer to judge whether this buffer is from screen capture client.
-*\return true on scree capture buffer,  otherwise false .
-*/
-bool is_screen_capture_buffer(struct weston_buffer *buffer);
+	/** Ensure if it is screen capture buffer or not
+	 *
+	 *\param buffer to judge whether this buffer is from screen capture client.
+	 *\return true on scree capture buffer,  otherwise false .
+	 */
+	bool (*is_screen_capture_buffer)(struct weston_buffer *buffer);
 
-/** Ensure if it is screen capture view or not
-*
-*\param ev Get the capture view state from ev.
-*\return true on scree capture view,  otherwise false .
-*/
-bool is_screen_capture_view(struct weston_view *ev);
+	/** Ensure if it is screen capture view or not
+	 *
+	 *\param ev Get the capture view state from ev.
+	 *\return true on scree capture view,  otherwise false .
+	 */
+	bool (*is_screen_capture_view)(struct weston_view *ev);
 
-void screen_capture_attach(struct weston_compositor *compositor,
-																		struct weston_buffer *buffer);
+	void (*attach)(struct weston_compositor *compositor,
+			struct weston_buffer *buffer);
 
+	bool (*is_capture_ready)(struct screen_capture *screen_cap,
+				 struct weston_output *output);
+};
 #endif /* WESTON_SCREEN_CAPTURE_H */

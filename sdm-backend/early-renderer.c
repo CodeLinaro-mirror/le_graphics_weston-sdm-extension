@@ -25,12 +25,16 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #include <libweston/libweston.h>
-#include "gbm-buffer-backend.h"
+#include <gbm-buffer-backend.h>
 #include "gbm-buffer-backend-server-protocol.h"
-#include "linux-dmabuf.h"
+#include <libweston-private/linux-dmabuf.h>
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "gbm_priv.h"
 
@@ -39,6 +43,7 @@ struct early_renderer {
 
 	struct gbm_device *gbm_hdle;
 };
+extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
 
 static bool
 early_renderer_import_gbm_buffer(struct weston_compositor *ec,
@@ -90,7 +95,7 @@ early_renderer_import_gbm_buffer(struct weston_compositor *ec,
 		gbm_buf->stride[j] = 0;
 	}
 
-	gbm_buffer_backend_set_user_data(gbm_buf, NULL, NULL);
+	gbm_buffer_backend_c_interface.set_user_data(gbm_buf, NULL, NULL);
 	GBM_PROTOCOL_LOG(LOG_DBG,"gl_renderer_import_gbm_buffer:Invoke import_gbm_buffer()");
 
 	return true;
@@ -135,7 +140,7 @@ early_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 		buffer->shm_buffer = shm_buffer;
 		buffer->width = wl_shm_buffer_get_width(shm_buffer);
 		buffer->height = wl_shm_buffer_get_height(shm_buffer);
-	} else if ((gbmbuf = gbm_buffer_get(buffer->resource))){
+	} else if ((gbmbuf = gbm_buffer_backend_c_interface.buffer_get(buffer->resource))){
 		buffer->width = gbmbuf->width;
 		buffer->height = gbmbuf->height;
 		buffer->y_inverted =

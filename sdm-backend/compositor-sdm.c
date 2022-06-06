@@ -46,6 +46,10 @@
 * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
 * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #include "config.h"
@@ -76,22 +80,22 @@
 #include <libweston/libweston.h>
 #include <libweston/backend-drm.h>
 
-#include "shared/helpers.h"
-#include "shared/timespec-util.h"
-#include "libbacklight.h"
-#include "renderer-gl/gl-renderer.h"
-#include "pixel-formats.h"
-#include "libinput-seat.h"
-#include "launcher-util.h"
-#include "vaapi-recorder.h"
-#include "presentation-time-server-protocol.h"
-#include "linux-dmabuf.h"
-#include "gbm-buffer-backend.h"
-#include "gbm-buffer-backend-server-protocol.h"
-#include "screen-capture.h"
+#include "weston-shared/helpers.h"
+#include "weston-shared/timespec-util.h"
+#include "weston-shared/weston-egl-ext.h"
+#include <libweston-private/libbacklight.h>
+#include <libweston-private/gl-renderer.h>
+#include <libweston-private/linux-dmabuf.h>
+
+#include <gbm-buffer-backend.h>
+#include <screen-capture.h>
 #include "../sdm-service/sdm_display_connect.h"
-#include "../sdm-service/compositor-sdm-output.h"
-#include "../drm-service/drm_display.h"
+#include <compositor-sdm-output.h>
+#include "drm-service/drm_display.h"
+
+#include "pll-server-protocol.h"
+#include "presentation-time-server-protocol.h"
+#include "gbm-buffer-backend-server-protocol.h"
 
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
@@ -158,6 +162,8 @@ static const char default_seat[] = "seat0";
 
 pthread_mutex_t full_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t full_init_cond = PTHREAD_COND_INITIALIZER;
+extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
+extern struct screen_capture_c_interface screen_capture_c_interface;
 
 extern int early_renderer_init(struct weston_compositor *ec,
 		struct gbm_device * gbm);
@@ -585,6 +591,61 @@ drm_set_dpms(struct weston_output *output_base, enum dpms_enum level);
 static int
 drm_output_init_pixman(struct drm_output *output, struct drm_backend *b);
 
+static void
+pll_destroy(struct wl_client *client,
+	struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+pll_enable_ppm(struct wl_client *client,
+	struct wl_resource *pll, int32_t enable)
+{
+	struct weston_compositor *compositor = wl_resource_get_user_data(pll);
+	struct weston_output *output, *next;
+
+	wl_list_for_each_safe(output, next, &compositor->output_list, link) {
+		if (output->enable_ppm)
+			output->enable_ppm(output, enable);
+	}
+}
+
+static void
+pll_set_ppm(struct wl_client *client,
+		    struct wl_resource *pll,
+		    int32_t ppm)
+{
+	struct weston_compositor *compositor = wl_resource_get_user_data(pll);
+	struct weston_output *output, *next;
+
+	wl_list_for_each_safe(output, next, &compositor->output_list, link) {
+		if (output->set_ppm)
+			output->set_ppm(output, ppm);
+	}
+}
+
+static const struct wl_pll_interface pll_interface = {
+	pll_destroy,
+	pll_enable_ppm,
+	pll_set_ppm
+};
+
+static void
+bind_pll(struct wl_client *client,
+	    void *data, uint32_t version, uint32_t id)
+{
+	struct wl_resource *resource;
+
+	resource = wl_resource_create(client, &wl_pll_interface, 1, id);
+	if (resource == NULL) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+
+	wl_resource_set_implementation(resource, &pll_interface,
+		                       data, NULL);
+}
 static int
 finish_init(struct drm_backend *b)
 {
@@ -619,11 +680,14 @@ finish_init(struct drm_backend *b)
 				weston_log("Error: initializing dmabuf "
 						"support failed.\n");
 		}
-		if (screen_capture_setup(b->compositor) < 0)
+		if (screen_capture_c_interface.setup(b->compositor) < 0)
 				weston_log("Error: initializing screen_capture_setup "
 						"support failed.\n");
 
 	}
+	if (!wl_global_create(b->compositor->wl_display, &wl_pll_interface, 1,
+			    		b->compositor, bind_pll))
+		weston_log("Error: initializing wl_pll_interface failed.\n");
 
 	if (!b->early_boot)
 		goto out;
@@ -827,7 +891,7 @@ drm_output_repaint(struct weston_output *output_base,
 	output_repaint(output_base, damage, false);
 
 	/* Do output repaint for virtual output. */
-	if (is_capture_ready(screen_cap, output_base) && screen_cap->next)
+	if (screen_capture_c_interface.is_capture_ready(screen_cap, output_base) && screen_cap->next)
 		do_screen_capture(screen_cap, damage);
 
 	return 0;
@@ -1122,7 +1186,7 @@ drm_assign_planes_early(struct weston_output *output_base)
 
 		if (es->buffer_ref.buffer) {
 			struct gbm_buffer *gbm_buf =
-					gbm_buffer_get(es->buffer_ref.buffer->resource);
+					gbm_buffer_backend_c_interface.buffer_get(es->buffer_ref.buffer->resource);
 
 			if(gbm_buf &&
 						gbm_buf->flags & GBM_BUFFER_PARAMS_FLAGS_EARLY_DISPLAY) {
@@ -1231,7 +1295,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 		}
 
 		/* Skip the screen capture view as it's not used for display */
-		if (is_screen_capture_view(ev)) {
+		if (screen_capture_c_interface.is_screen_capture_view(ev)) {
 			/* surface of screen capture don't need to keep its buffer, it
 			 * keeps in screencapture attached_buf_list. screen_capture_attach
 			 * increase the buffer refcount and do_screen_capture decrease the
@@ -1269,7 +1333,9 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 		output->view_count++;
 		pixman_region32_union(&above_opaque, &above_opaque, &ev->transform.opaque);
 		/* if it's yuv buffer and alpha is 1.0, its whole boundingbox is the opaque region*/
-		if ((es->buffer_ref.buffer) && is_yuv_buffer(es->buffer_ref.buffer) && ev->alpha == 1.0)
+		if ((es->buffer_ref.buffer) && 
+			gbm_buffer_backend_c_interface.is_yuv_buffer(es->buffer_ref.buffer) && 
+			ev->alpha == 1.0)
 			pixman_region32_union(&above_opaque, &above_opaque, &ev->transform.boundingbox);
 	}
 
@@ -1353,12 +1419,12 @@ drm_assign_planes(struct weston_output *output_base)
 	 * If the last attached buffer has not been consumed yet, skip this commit
 	 * until it's consumed to guarantee each client buffer has content update.
 	 */
-	if (is_capture_ready(screen_cap, output_base) &&
+	if (screen_capture_c_interface.is_capture_ready(screen_cap, output_base) &&
 		!wl_list_empty(&screen_cap->attached_buf_list) &&
 		!screen_cap->next) {
 		/* Pick the first entry in the attached list */
 		screen_cap->next = container_of(screen_cap->attached_buf_list.next,
-									struct screen_capture_buffer, link);
+						struct screen_capture_buffer, link);
 		wl_list_remove(&screen_cap->next->link);
 
 		if (!has_GPU_composition) {
@@ -1619,16 +1685,17 @@ drm_backend_create_gl_renderer(struct drm_backend *b)
 		b->format,
 		fallback_format_for(b->format),
 	};
-	int n_formats = 1;
+	struct gl_renderer_display_options options = {
+		.egl_platform = EGL_PLATFORM_GBM_KHR,
+		.egl_native_display = b->gbm,
+		.egl_surface_type = EGL_WINDOW_BIT,
+		.drm_formats = format,
+		.drm_formats_count = 1,
+	};
 
 	if (format[1])
-		n_formats = 2;
-	if (gl_renderer->display_create(b->compositor,
-					EGL_PLATFORM_GBM_KHR,
-					(void *)b->gbm,
-					EGL_WINDOW_BIT,
-					format,
-					n_formats) < 0) {
+		options.drm_formats_count = 2;
+	if (gl_renderer->display_create(b->compositor, &options) < 0) {
 		return -1;
 	}
 
@@ -1837,7 +1904,7 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 		output->format,
 		fallback_format_for(output->format),
 	};
-	int i, flags, n_formats = 1;
+	int i, flags;
 	flags = GBM_BO_USE_SCANOUT |
 			GBM_BO_USE_RENDERING |
 			GBM_BO_USAGE_UBWC_ALIGNED_QTI |
@@ -1866,13 +1933,16 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 		return -1;
 	}
 
+	struct gl_renderer_output_options options = {
+		.window_for_legacy = (EGLNativeWindowType) output->surface,
+		.window_for_platform = output->surface,
+		.drm_formats = format,
+		.drm_formats_count = 1,
+	};
+
 	if (format[1])
-		n_formats = 2;
-	if (gl_renderer->output_window_create(&output->base,
-							(EGLNativeWindowType)output->surface,
-							output->surface,
-							format,
-							n_formats) < 0) {
+		options.drm_formats_count = 2;
+	if (gl_renderer->output_window_create(&output->base, &options) < 0) {
 		weston_log("failed to create gl renderer output state\n");
 		gbm_surface_destroy(output->surface);
 		return -1;
@@ -2804,7 +2874,7 @@ drm_destroy(struct weston_compositor *ec)
 	udev_input_destroy(&b->input);
 
 	wl_event_source_remove(b->udev_drm_source);
-	weston_compositor_log_scope_destroy(b->debug);
+	weston_log_scope_destroy(b->debug);
 	b->debug = NULL;
 	weston_compositor_shutdown(ec);
 	//TODO(user): Need to destroy the display device here
@@ -3331,7 +3401,7 @@ drm_backend_create(struct weston_compositor *compositor,
 	b->compositor = compositor;
 	b->use_pixman = config->use_pixman;
 
-	b->debug = weston_compositor_add_log_scope(compositor->weston_log_ctx,
+	b->debug = weston_compositor_add_log_scope(compositor,
 						   "drm-backend",
 						   "Debug messages from DRM/KMS backend\n",
 						    NULL, NULL, NULL);
@@ -3377,7 +3447,7 @@ drm_backend_create(struct weston_compositor *compositor,
 						   compositor->renderer->import_gbm_buffer);
 
 	if (compositor->renderer->import_gbm_buffer) {
-		if (gbm_buffer_backend_setup(compositor) < 0)
+		if (gbm_buffer_backend_c_interface.setup(compositor) < 0)
 			weston_log("Error: initializing gbm_buffer_backend_setup "
 					"support failed.\n");
 	}

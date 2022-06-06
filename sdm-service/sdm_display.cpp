@@ -50,6 +50,10 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include <assert.h>
 #include <stdarg.h>
@@ -88,6 +92,7 @@ namespace sdm {
 #define SDM_DISPLAY_DEBUG 0
 #define SDM_DISPLAY_DUMP_LAYER_STACK 0
 
+extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
 Layer *SdmLayerManager::get_layer(struct sdm_layer *sdm_layer)
 {
   std::lock_guard<std::mutex> lock(lock_);
@@ -665,7 +670,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
        */
       if(!es->buffer_ref.buffer->y_inverted)
         layer->transform = SDM_TRANSFORM_FLIP_V;
-    } else if ((gbm_buf = gbm_buffer_get(es->buffer_ref.buffer->resource))) {
+    } else if ((gbm_buf = gbm_buffer_backend_c_interface.buffer_get(es->buffer_ref.buffer->resource))) {
       struct gbm_buf_info gbm_bufinfo = {
         .fd           = gbm_buf->fd,
         .metadata_fd  = gbm_buf->metadata_fd,

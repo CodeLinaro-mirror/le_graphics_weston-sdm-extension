@@ -24,6 +24,10 @@
 * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #include "drm_display.h"
@@ -41,7 +45,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "../sdm-service/compositor-sdm-output.h"
+#include <compositor-sdm-output.h>
 #ifdef __cplusplus
 }
 #endif
@@ -107,6 +111,7 @@ struct early_display {
   int32_t connector_id;
   int32_t crtc_id;
 };
+extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
 
 int early_get_drm_master() {
   DRMMaster *master = nullptr;
@@ -471,7 +476,7 @@ int early_layer_prepare(struct early_layer *layer, struct drm_output *output) {
 
   assert(buffer != NULL);
 
-  if (!(gbm_buf = gbm_buffer_get(buffer->resource))) {
+  if(!(gbm_buf = gbm_buffer_backend_c_interface.buffer_get(buffer->resource))) {
     weston_log("only gbm buffer is supported for early display\n");
     return ret;
   }
@@ -499,7 +504,7 @@ int early_layer_prepare(struct early_layer *layer, struct drm_output *output) {
 
   layer->fb_id = fb_id;
   layer->bo = bo;
-  layer->yuv_required = is_yuv_format(gbm_buf->format);
+  layer->yuv_required = gbm_buffer_backend_c_interface.is_yuv_format(gbm_buf->format);
   ret=gbm_perform(GBM_PERFORM_GET_SECURE_BUFFER_STATUS, bo, &layer->secure);
   if (ret) {
     weston_log("gbm get buffer secure status fail\n");

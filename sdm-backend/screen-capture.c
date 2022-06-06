@@ -25,6 +25,10 @@
 *    WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 *    OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 *    IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+*    Changes from Qualcomm Innovation Center are provided under the following license:
+*    Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+*    SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 
@@ -35,11 +39,13 @@
 #include <libweston/libweston.h>
 #include "gbm_priv.h"
 #include "gbm-buffer-backend.h"
-#include "linux-dmabuf.h"
+#include <libweston-private/linux-dmabuf.h>
 #include "screen-capture.h"
 #include "gbm-buffer-backend-server-protocol.h"
 #include "screen-capture-server-protocol.h"
-#include "../sdm-service/compositor-sdm-output.h"
+#include <compositor-sdm-output.h>
+
+extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
 
 static struct drm_output *
 screen_capture_create_virtual_display(struct weston_output *mirror_output)
@@ -227,7 +233,7 @@ screen_capture_start(struct wl_client *client,
 	SC_PROTOCOL_LOG(SC_LOG_DBG,"screen_capture_start::Exited\n");
 }
 
-WL_EXPORT bool
+static bool
 is_capture_ready(struct screen_capture *screen_cap, struct weston_output *output)
 {
 	if (!screen_cap)
@@ -237,7 +243,7 @@ is_capture_ready(struct screen_capture *screen_cap, struct weston_output *output
 			screen_cap->mirror_output_id == output->id);
 }
 
-WL_EXPORT void
+static void
 screen_capture_attach(struct weston_compositor *compositor,
 		struct weston_buffer *buffer)
 {
@@ -258,7 +264,7 @@ screen_capture_attach(struct weston_compositor *compositor,
 	}
 
 	/* Screen capture buffer can't be NULL */
-	gbm_buf = gbm_buffer_get(buffer->resource);
+	gbm_buf = gbm_buffer_backend_c_interface.buffer_get(buffer->resource);
 	if (!gbm_buf) {
 		return;
 	}
@@ -301,13 +307,12 @@ screen_capture_attach(struct weston_compositor *compositor,
 	}
 }
 
-WL_EXPORT bool
+static bool
 is_screen_capture_buffer(struct weston_buffer *buffer)
 {
 
 	if (buffer) {
-		struct gbm_buffer *gbm_buf =
-				gbm_buffer_get(buffer->resource);
+		struct gbm_buffer *gbm_buf = gbm_buffer_backend_c_interface.buffer_get(buffer->resource);
 
 		if (gbm_buf &&
 				gbm_buf->flags & GBM_BUFFER_PARAMS_FLAGS_SCREEN_CAPTURE) {
@@ -318,7 +323,7 @@ is_screen_capture_buffer(struct weston_buffer *buffer)
 	return false;
 }
 
-WL_EXPORT bool
+static bool
 is_screen_capture_view(struct weston_view *ev)
 {
 	if (ev->is_capture_view)
@@ -326,7 +331,7 @@ is_screen_capture_view(struct weston_view *ev)
 
 	if (ev && ev->surface && ev->surface->buffer_ref.buffer) {
 		struct gbm_buffer *gbm_buf =
-				gbm_buffer_get(ev->surface->buffer_ref.buffer->resource);
+				gbm_buffer_backend_c_interface.buffer_get(ev->surface->buffer_ref.buffer->resource);
 
 		if (gbm_buf &&
 				gbm_buf->flags & GBM_BUFFER_PARAMS_FLAGS_SCREEN_CAPTURE) {
@@ -452,18 +457,7 @@ bind_screen_capture(struct wl_client *client,
 	SC_PROTOCOL_LOG(SC_LOG_DBG,"bind_screen_capture::Exited\n");
 }
 
-/** Advertise screen_capture support
- *
- * Calling this initializes the screen_capture protocol support, so that
- * the interface will be advertised to clients. Essentially it creates a
- * global. Do not call this function multiple times in the compositor's
- * lifetime. There is no way to deinit explicitly, globals will be reaped
- * when the wl_display gets destroyed.
- *
- * \param compositor The compositor to init for.
- * \return Zero on success, -1 on failure.
- */
-WL_EXPORT int
+static int
 screen_capture_setup(struct weston_compositor *compositor)
 {
 	SC_PROTOCOL_LOG(SC_LOG_DBG,"screen_capture_setup::Invoked\n");
@@ -477,3 +471,11 @@ screen_capture_setup(struct weston_compositor *compositor)
 
 	return 0;
 }
+
+WL_EXPORT struct screen_capture_c_interface screen_capture_c_interface = {
+	.setup = screen_capture_setup,
+	.is_screen_capture_buffer = is_screen_capture_buffer,
+	.is_screen_capture_view = is_screen_capture_view,
+	.attach = screen_capture_attach,
+	.is_capture_ready = is_capture_ready,
+};

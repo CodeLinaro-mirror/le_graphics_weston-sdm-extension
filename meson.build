@@ -102,7 +102,7 @@ dep_libdrmutils = cxx.find_library('drmutils')
 dep_libsdedrm = cxx.find_library('sdedrm')
 dep_libsync = cc.find_library('sync')
 # Depends on specific libraries from weston
-dep_libweston = dependency('libweston-8')
+dep_libweston = dependency('libweston-10')
 dep_libinput_backend = cc.find_library('libinput-backend')
 dep_session_helper = cc.find_library('session-helper')
 dep_backlight = cc.find_library('backlight')
