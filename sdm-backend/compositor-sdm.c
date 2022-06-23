@@ -79,6 +79,8 @@
 #include <libudev.h>
 #include <libweston/libweston.h>
 #include <libweston/backend-drm.h>
+#include <libweston/weston-log.h>
+#include <libweston/config-parser.h>
 
 #include "weston-shared/helpers.h"
 #include "weston-shared/timespec-util.h"
@@ -86,6 +88,8 @@
 #include <libweston-private/libbacklight.h>
 #include <libweston-private/gl-renderer.h>
 #include <libweston-private/linux-dmabuf.h>
+#include <libweston-private/launcher-util.h>
+#include <libweston-private/pixman-renderer.h>
 
 #include <gbm-buffer-backend.h>
 #include <screen-capture.h>
@@ -1957,7 +1961,9 @@ drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
 	int w = output->base.current_mode->width;
 	int h = output->base.current_mode->height;
 	unsigned int i;
-	uint32_t flags = 0;
+	const struct pixman_renderer_output_options options = {
+		.use_shadow = b->use_pixman_shadow,
+	};
 	/* FIXME error checking */
 
 	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
@@ -1973,8 +1979,11 @@ drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
 			goto err;
 	}
 
-	if (pixman_renderer_output_create(&output->base, flags) < 0)
+	if (pixman_renderer_output_create(&output->base, &options) < 0)
 		goto err;
+
+	weston_log("DRM: output %s %s shadow framebuffer.\n", output->base.name,
+		   b->use_pixman_shadow ? "uses" : "does not use");
 
 	pixman_region32_init_rect(&output->previous_damage,
 			output->base.x, output->base.y, output->base.width, output->base.height);
@@ -3400,6 +3409,7 @@ drm_backend_create(struct weston_compositor *compositor,
 
 	b->compositor = compositor;
 	b->use_pixman = config->use_pixman;
+	b->use_pixman_shadow = config->use_pixman_shadow;
 
 	b->debug = weston_compositor_add_log_scope(compositor,
 						   "drm-backend",
