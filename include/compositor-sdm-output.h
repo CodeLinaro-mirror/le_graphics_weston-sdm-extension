@@ -144,6 +144,8 @@ struct drm_backend {
   uint32_t format;
   int no_addfb3;
   int use_pixman;
+  bool use_pixman_shadow;
+
   uint32_t prev_state;
   struct udev_input input;
   int32_t cursor_width;
