@@ -86,7 +86,12 @@
 #include "weston-shared/timespec-util.h"
 #include "weston-shared/weston-egl-ext.h"
 #include <libweston-private/libbacklight.h>
+
+#ifdef PIXMAN_RENDER
+#else
 #include <libweston-private/gl-renderer.h>
+#endif
+
 #include <libweston-private/linux-dmabuf.h>
 #include <libweston-private/launcher-util.h>
 #include <libweston-private/pixman-renderer.h>
@@ -157,7 +162,14 @@ struct drm_head {
 	void *early_display_intf;
 };
 
+#ifdef PIXMAN_RENDER
+struct gl_renderer_interface {
+    int a;
+};
 static struct gl_renderer_interface *gl_renderer;
+#else
+static struct gl_renderer_interface *gl_renderer;
+#endif
 
 /* sdm service is built as a seperate shared library */
 static struct sdm_service_interface *sdm_service;
@@ -1580,6 +1592,8 @@ drm_output_switch_mode(struct weston_output *output_base, struct weston_mode *mo
 					"new mode\n");
 			return -1;
 		}
+#ifdef PIXMAN_RENDER
+#else
 	} else {
 		gl_renderer->output_destroy(&output->base);
 		gbm_surface_destroy(output->surface);
@@ -1589,6 +1603,7 @@ drm_output_switch_mode(struct weston_output *output_base, struct weston_mode *mo
 					"new mode");
 			return -1;
 		}
+#endif
 	}
 
 	return 0;
@@ -1639,6 +1654,8 @@ init_early_renderer(struct drm_backend *b)
 	return 0;
 }
 
+#ifdef PIXMAN_RENDER
+#else
 static struct gbm_device *
 create_gbm_device(int fd)
 {
@@ -1660,6 +1677,7 @@ create_gbm_device(int fd)
 
 	return gbm;
 }
+#endif
 
 /* When initializing EGL, if the preferred buffer format isn't available
  * we may be able to susbstitute an ARGB format for an XRGB one.
@@ -1684,6 +1702,13 @@ fallback_format_for(uint32_t format)
 	}
 }
 
+#ifdef PIXMAN_RENDER
+static int
+drm_backend_create_gl_renderer(struct drm_backend *b)
+{
+    return 0;
+}
+#else
 static int
 drm_backend_create_gl_renderer(struct drm_backend *b)
 {
@@ -1707,6 +1732,7 @@ drm_backend_create_gl_renderer(struct drm_backend *b)
 
 	return 0;
 }
+#endif
 
 /**
  * Add a mode to output's mode list
@@ -1902,6 +1928,13 @@ drm_set_ppm(struct weston_output *output_base, int32_t ppm)
 	return;
 }
 
+#ifdef PIXMAN_RENDER
+static int
+drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
+{
+    return 0;
+}
+#else
 /* Init output state that depends on gl or gbm */
 static int
 drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
@@ -1956,6 +1989,7 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 
 	return 0;
 }
+#endif
 
 static int
 drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
@@ -2585,6 +2619,13 @@ err:
 	return -1;
 }
 
+#ifdef PIXMAN_RENDER
+static void
+drm_output_fini_egl(struct drm_output *output)
+{
+    return NULL;
+}
+#else
 static void
 drm_output_fini_egl(struct drm_output *output)
 {
@@ -2596,6 +2637,8 @@ drm_output_fini_egl(struct drm_output *output)
 	gl_renderer->output_destroy(&output->base);
 	gbm_surface_destroy(output->surface);
 }
+#endif
+
 
 static void
 drm_output_deinit(struct weston_output *base)
@@ -3146,6 +3189,13 @@ switch_to_gl_renderer(struct drm_backend *b)
 	}
 }
 
+#ifdef PIXMAN_RENDER
+static void
+renderer_switch_binding(struct weston_keyboard *keyboard, const struct timespec *time,
+		uint32_t key, void *data)
+{
+}
+#else
 static void
 renderer_switch_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 		uint32_t key, void *data)
@@ -3155,6 +3205,7 @@ renderer_switch_binding(struct weston_keyboard *keyboard, const struct timespec 
 
 	switch_to_gl_renderer(b);
 }
+#endif
 
 static const struct weston_drm_output_api api = {
 	drm_output_set_mode,
@@ -3265,10 +3316,13 @@ static void *full_init_main(void *arg) {
 	if(drm_backend_create_sdm_heads(b))
 		goto err_sdm_core;
 
+#ifdef PIXMAN_RENDER
+#else
 	gl_renderer = weston_load_module("gl-renderer.so",
 							"gl_renderer_interface");
 	if (!gl_renderer)
 		goto err_sdm_core;
+#endif
 
 	/* GBM will load a dri driver, but even though they need symbols from
 	 * libglapi, in some version of Mesa they are not linked to it. Since
