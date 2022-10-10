@@ -117,6 +117,7 @@ screen_capture_create_screen(struct wl_client *client,
 		return;
 	}
 
+	screen_cap->mirror_output = mirror_output;
 	screen_cap->mirror_output_id = mirror_output->id;
 	screen_cap->width = width;
 	screen_cap->height = height;

@@ -72,6 +72,7 @@ struct screen_capture {
 	uint32_t height;
 	struct weston_compositor *compositor;
 	uint32_t mirror_output_id;
+	struct weston_output *mirror_output; /* retain the original output */
 	void *virtual_output; /* point to drm_output to avoid nested definition */
 	bool enabled;
 	bool fallback_gpu;
