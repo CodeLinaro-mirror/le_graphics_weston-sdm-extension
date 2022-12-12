@@ -869,7 +869,6 @@ do_screen_capture(struct screen_capture *screen_cap,
 		pixman_region32_t *damage)
 {
 	struct screen_capture_buffer *cap_buf = screen_cap->next;
-	struct drm_output *virt_output = screen_cap->virtual_output;
 
 	/*
 	 * Decrease the attached refcnt after increasing composition refcnt to
@@ -879,8 +878,8 @@ do_screen_capture(struct screen_capture *screen_cap,
 	weston_buffer_reference(&cap_buf->buf_ref, NULL);
 
 	if (screen_cap->fallback_gpu) {
-		screen_cap->compositor->renderer->capture_screen(&virt_output->base,
-					cap_buf->buffer, damage, screen_cap->mirror_output);
+		screen_cap->compositor->renderer->capture_screen(screen_cap->mirror_output,
+						cap_buf->buffer, damage);
 
 		/* Release the buffer once GPU composition is completed */
 		weston_buffer_reference(&screen_cap->buf_ref, NULL);
@@ -3225,8 +3224,8 @@ static int init_sdm(void) {
 
 	int rc = sdm_service->CreateCore();
 	if (rc) {
-		weston_log("failed to create SDM core\n");
-		return rc;
+		weston_log("failed to create SDM core, error = %d\n", rc);
+		return -1;
 	}
 
 	weston_log("SDM core created\n");
