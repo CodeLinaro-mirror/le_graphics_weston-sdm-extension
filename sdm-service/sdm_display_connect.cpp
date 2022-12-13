@@ -25,6 +25,10 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #include "sdm_display.h"
@@ -58,6 +62,8 @@ SdmDisplayProxy *display_[MAX_SUPPORT_DISPLAYS] = {0};
 HWDisplaysInfo hw_displays_info_ = {};
 // ordered by output id
 SdmDisplaysInfo sdm_displays_info_ = {};
+//store new plug-in displays
+static std::map<uint32_t, uint32_t> plug_displays_ = {};
 
 int CreateCore()
 {
@@ -133,7 +139,6 @@ uint32_t GetDisplayCount(void) {
   return count;
 }
 
-
 void HandlePrimaryDisplayInfo() {
   HWDisplaysInfo::iterator iter = hw_displays_info_.begin();
   int slot = sdm_displays_info_.size();
@@ -189,6 +194,86 @@ int GetDisplayInfos(void) {
   /* pluggable display*/
   HandleNonPrimaryDisplayInfos(sdm::kPluggable);
   return 0;
+}
+
+int UpdateDisplayInfos(void) {
+  DisplayError error = kErrorNone;
+  int32_t count = 0;
+  HWDisplaysInfo disp_info = {};
+  int32_t slot = -1;
+  //bool has_newplug = false;
+  int32_t new_plug = 0;
+  bool connected = false;
+  uint32_t connector_id;
+
+  plug_displays_.clear();
+
+  slot = sdm_displays_info_.size();
+  error = core_intf_->GetDisplaysStatus(&disp_info);
+  if (error != kErrorNone) {
+    DLOGE("function GetDisplaysStatus failed. Error = %d", error);
+    return -1;
+  }
+
+  auto iter = disp_info.begin();
+  for (iter; iter != disp_info.end(); ++iter) {
+    if ((iter->second.display_type == sdm::kVirtual) ||
+      (iter->second.display_type == sdm::kBuiltIn))
+      continue;
+
+    connected = iter->second.is_connected;
+    connector_id = iter->second.display_id;
+
+    auto iter1 = sdm_displays_info_.begin();
+    for (iter1; iter1 != sdm_displays_info_.end(); ++iter1) {
+      if (iter1->second.display_id == connector_id) {
+        if (iter1->second.is_connected != connected) {
+          if (display_[iter1->first] != NULL) {
+            error = display_[iter1->first]->HandleHotplug(connected);
+            /* update previous display info if hotplug success */
+            if (error == kErrorNone)
+              iter1->second = iter->second;
+          } else {
+            /* this case happens in create display always fail by previous handling */
+            plug_displays_[new_plug] = iter1->first;
+            iter1->second = iter->second;
+            new_plug++;
+          }
+        }
+
+        break;
+      }
+    }
+
+    if (iter1 != sdm_displays_info_.end() || connected == false)
+      continue;
+
+    plug_displays_[new_plug] = slot;
+    sdm_displays_info_[slot] = iter->second;
+    new_plug++;
+    slot++;
+  }
+
+  return new_plug;
+}
+
+void UpdateDisplayStatus(int display_id, bool connected)
+{
+  auto iter = sdm_displays_info_.find(display_id);
+
+  if (iter != sdm_displays_info_.end())
+    iter->second.is_connected = connected;
+}
+
+int GetNewPlugDisplayID(int idx)
+{
+  std::map<uint32_t, uint32_t>::iterator iter = plug_displays_.find(idx);
+  if (iter != plug_displays_.end())
+    return iter->second;
+
+  DLOGE("No new plug displays\n");
+
+  return -1;
 }
 
 char *GetConnectorName(uint32_t display_id) {
@@ -541,6 +626,29 @@ int SetPlaneInitState() {
   return notifier_intf_->PipesStateChanged();
 }
 
+int SetHead(int display_id, drm_head* head) {
+  DisplayError error = kErrorNone;
+
+  if (display_id >= MAX_SUPPORT_DISPLAYS || display_id < 0) {
+    DLOGE("Display id(%d) out of range.", display_id);
+    return kErrorParameters;
+  }
+
+  if (!display_[display_id]) {
+    DLOGE("function failed. Display(%d) not created yet.",
+        display_id);
+    return kErrorParameters;
+  }
+
+  error = display_[display_id]->SetHead(head);
+  if (error != kErrorNone) {
+    DLOGE("function failed with error = %d", error);
+    return error;
+  }
+
+  return kErrorNone;
+}
+
 WL_EXPORT struct sdm_service_interface sdm_service_interface {
   .CreateCore = CreateCore,
   .DestroyCore = DestroyCore,
@@ -561,7 +669,11 @@ WL_EXPORT struct sdm_service_interface sdm_service_interface {
   .UpdateDisplayPll = UpdateDisplayPll,
   .SetPlaneInitState = SetPlaneInitState,
   .GetConnectorName = GetConnectorName,
-  .GetConnectorId = GetConnectorId
+  .GetConnectorId = GetConnectorId,
+  .UpdateDisplayInfos = UpdateDisplayInfos,
+  .GetNewPlugDisplayID = GetNewPlugDisplayID,
+  .SetHead = SetHead,
+  .UpdateDisplayStatus = UpdateDisplayStatus
 };
 
 }// namespace sdm
