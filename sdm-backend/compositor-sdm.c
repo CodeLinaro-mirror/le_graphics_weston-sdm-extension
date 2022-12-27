@@ -815,7 +815,6 @@ output_repaint(struct weston_output *output_base,
 	}
 	assert(wl_list_empty(&output->plane_flip_list));
 
-	sdm_service->SetVSyncState(output->display_id, ENABLE, output);
 	if (output->prev_layer_none_commit && output->layer_none_commit)
 		weston_log("skip commit if two consecutive frames have no layers\n");
 	else if (output->layer_none_commit){

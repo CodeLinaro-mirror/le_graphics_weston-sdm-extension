@@ -1631,7 +1631,6 @@ int SdmDisplayProxy::HandleHotplug(bool connected) {
       }
       output = display_intf_->GetOutput();
       display_intf_->SetDisplayState(kStateOn);
-      display_intf_->SetVSyncState(true, output);
 
       if (hotplug_cb_) {
       hotplug_cb_(disp_type_, connected, output);
@@ -1648,7 +1647,6 @@ int SdmDisplayProxy::HandleHotplug(bool connected) {
       }
 
       output = display_intf_->GetOutput();
-      display_intf_->SetVSyncState(false, output);
       display_intf_->DestroyDisplay();
 
       display_intf_ = &null_disp_;
