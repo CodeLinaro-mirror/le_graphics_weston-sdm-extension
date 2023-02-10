@@ -25,6 +25,10 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef SDM_DISPLAY_INTERFACE_H
@@ -148,8 +152,8 @@ struct LayerGeometry {
   uint32_t               unaligned_height;
   uint32_t               format;
   uint32_t               fb_id;
-  uint32_t               ion_fd;
   uint32_t               handle_id;
+  int32_t                ion_fd;
   /* Layer information */
   uint32_t               composition; /*GPU, Overlay, HWCursor*/
   struct Rect            src_rect; /* srouce rectangle */
@@ -222,7 +226,8 @@ struct DisplayConfigInfo {
   bool     is_yuv;            //!< If the display output is in YUV format.
 };
 
-typedef void (*hotplug_cb_t)(int disp, bool connected, struct drm_output *data);
+/*disp is the connector id*/
+typedef void (*hotplug_cb_t)(int disp, bool connected, struct drm_head *data);
 
 typedef struct sdm_cbs {
   hotplug_cb_t hotplug_cb;

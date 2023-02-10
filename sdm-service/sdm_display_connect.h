@@ -25,6 +25,10 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef SDM_DISPLAY_CONNECT_H
@@ -307,6 +311,55 @@ char* (*GetConnectorName)(uint32_t display_id);
     @sa
 */
 uint32_t (*GetConnectorId)(uint32_t display_id);
+
+
+/*! @brief Method to update display information.
+
+    @details weston backend shall use this method to update display info
+     and handle plug displays. It will return the new plug-in display count.
+
+    @return \link int \endlink
+
+    @sa
+*/
+int (*UpdateDisplayInfos)(void);
+
+/*! @brief Method to get new plugged display id.
+
+    @details weston backend shall use this method to get display id of new
+     plug-in displays.
+
+    @param[in] idx \link int \endlink
+    @return \link int \endlink
+
+    @sa
+*/
+int (*GetNewPlugDisplayID)(int idx);
+
+
+/*! @brief Method to set head for display.
+
+    @details weston backend shall use this method to set display head
+
+    @param[in] head \link struct drm_head* \endlink
+    @return \link int \endlink
+
+    @sa
+*/
+int (*SetHead)(int display_id, struct drm_head* head);
+
+/*! @brief Method to update display connect status
+
+    @details weston backend shall use this method to update display connect
+     status if create display fail.
+
+    @param[in] display_id \link int \endlink
+    @param[in] connected \link bool \endlink
+    @return \link int \endlink
+
+    @sa
+*/
+void (*UpdateDisplayStatus)(int display_id, bool connected);
 };
 #ifdef __cplusplus
 }
