@@ -85,6 +85,7 @@
 #include "weston-shared/helpers.h"
 #include "weston-shared/timespec-util.h"
 #include "weston-shared/weston-egl-ext.h"
+#include "weston-shared/string-helpers.h"
 #include <libweston-private/libbacklight.h>
 #include <libweston-private/gl-renderer.h>
 #include <libweston-private/linux-dmabuf.h>
@@ -174,6 +175,8 @@ extern int early_renderer_init(struct weston_compositor *ec,
 
 static void
 drm_output_update_msc(struct drm_output *output, unsigned int seq);
+
+static int create_sdm_display(struct drm_backend *backend, int idx);
 
 static inline struct drm_head *
 to_drm_head(struct weston_head *base)
@@ -803,7 +806,6 @@ output_repaint(struct weston_output *output_base,
 	}
 	assert(wl_list_empty(&output->plane_flip_list));
 
-	sdm_service->SetVSyncState(output->display_id, ENABLE, output);
 	if (output->prev_layer_none_commit && output->layer_none_commit)
 		weston_log("skip commit if two consecutive frames have no layers\n");
 	else if (output->layer_none_commit){
@@ -1483,6 +1485,7 @@ drm_output_destroy(struct weston_output *output_base)
 	struct drm_output *output = (struct drm_output *) output_base;
 	struct drm_backend *b =
 		(struct drm_backend *)output->base.compositor->backend;
+	struct sdm_layer *sdm_layer, *next_sdm_layer;
 
 	if (output->frame_pending) {
 		output->destroy_pending = 1;
@@ -1498,6 +1501,9 @@ drm_output_destroy(struct weston_output *output_base)
 
 	if (output->base.enabled)
 		drm_output_deinit(&output->base);
+
+	wl_list_for_each_safe(sdm_layer, next_sdm_layer, &output->commited_layer_list, link)
+		destroy_sdm_layer(sdm_layer);
 
 	drm_mode_list_destroy(b, &output->base.mode_list);
 
@@ -1925,6 +1931,11 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 								format[0],
 								flags);
 
+	if (!output->surface) {
+		weston_log("failed to create gbm surface\n");
+		return -1;
+	}
+
 	output->framebuffer_ubwc = false;
 	//Query whether allocated BOs are UBWC or not
 	gbm_perform(GBM_PERFORM_GET_SURFACE_UBWC_STATUS, output->surface, &output->framebuffer_ubwc);
@@ -1933,10 +1944,6 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 	gbm_perform(GBM_PERFORM_GET_SURFACE_SECURE_STATUS, output->surface, &secure_status);
 	output->is_secure = (bool)secure_status;
 
-	if (!output->surface) {
-		weston_log("failed to create gbm surface\n");
-		return -1;
-	}
 
 	struct gl_renderer_output_options options = {
 		.window_for_legacy = (EGLNativeWindowType) output->surface,
@@ -2203,31 +2210,52 @@ headless_output_repaint(struct weston_output *output_base,
 	return 0;
 }
 
-static void
-hotplug_handler(int disp, bool connected, struct drm_output *output)
+static void get_display_config(int idx, struct DisplayConfigInfo *display_config)
 {
-	struct timespec ts;
+	/* default 1080p, 60 fps */
+	display_config->x_pixels = 1920;
+	display_config->y_pixels = 1080;
+	display_config->x_dpi = 300;
+	display_config->y_dpi = 300;
+	display_config->fps = 60;
+	display_config->vsync_period_ns = 16600000;
+	display_config->is_yuv = false;
+	bool rc = sdm_service->GetDisplayConfiguration(idx, display_config);
+	if (!rc) {
+		weston_log("Fail to get preferred mode, use default mode instead!");
+	}
+}
 
-	if (connected) {
-	output->base.start_repaint_loop = drm_output_start_repaint_loop;
-	output->base.repaint = drm_output_repaint;
-	output->base.assign_planes = drm_assign_planes;
-	output->base.set_dpms = drm_set_dpms;
-	output->base.switch_mode = drm_output_switch_mode;
-	output->base.enable_ppm = drm_enable_ppm;
-	output->base.set_ppm = drm_set_ppm;
-	} else {
-	output->base.start_repaint_loop = headless_output_start_repaint_loop;
-	output->base.repaint = headless_output_repaint;
-	output->base.assign_planes = NULL;
-	output->base.set_backlight = NULL;
-	output->base.set_dpms = NULL;
-	output->base.switch_mode = NULL;
-	output->base.enable_ppm = NULL;
-	output->base.set_ppm = NULL;
+static void update_head(struct drm_head *head, struct DisplayConfigInfo *display_config)
+{
+	uint32_t mmWidth  = (display_config->x_pixels / display_config->x_dpi) * 25.4;
+	uint32_t mmHeight = (display_config->y_pixels / display_config->y_dpi) * 25.4;
+	weston_head_set_subpixel(&head->base, WL_OUTPUT_SUBPIXEL_UNKNOWN);
+	weston_head_set_physical_size(&head->base, mmWidth, mmHeight);
+	head->inherited_mode.hdisplay = display_config->x_pixels;
+	head->inherited_mode.vdisplay = display_config->y_pixels;
+	head->inherited_mode.vrefresh = display_config->fps * 1000;
+	head->inherited_mode.flags |= WL_OUTPUT_MODE_CURRENT;
+}
+
+static void
+hotplug_handler(int disp, bool connected, struct drm_head *head)
+{
+	struct DisplayConfigInfo display_config = { 0 };
+
+	if (head == NULL) {
+		weston_log("head is null in hotplug handler\n");
+		return;
 	}
 
-	weston_output_schedule_repaint(&output->base);
+	drm_debug(head->backend, "[hotplug] connect %d\n", connected);
+	if (connected) {
+		get_display_config(head->display_id, &display_config);
+
+		update_head(head, &display_config);
+	}
+
+	weston_head_set_connection_status(&head->base, connected);
 }
 
 static int
@@ -2693,7 +2721,6 @@ static int
 drm_backend_create_sdm_heads(struct drm_backend *b)
 {
 	uint32_t display_count = 0;
-	int x=0, y=0, connector_id;
 	int idx, rc;
 	struct drm_head *head = NULL;
 
@@ -2703,53 +2730,14 @@ drm_backend_create_sdm_heads(struct drm_backend *b)
 	}
 
 	display_count = sdm_service->GetDisplayCount();
-	if (!display_count) {
-		weston_log("fail to get display from SDM! count=%d \n", display_count);
-		return -1;
-	}
 	weston_log("%d displays are connected\n", display_count);
 
 	for (idx = 0; idx < display_count; idx++) {
-		sdm_cbs_t sdm_cbs;
 
 		/* and create default display */
-		rc = sdm_service->CreateDisplay(idx);
-	if (!rc)
-		weston_log("CreateDisplay: %d successful\n", idx);
+		create_sdm_display(b, idx);
 
 		/* Now register callbacks with SDM services */
-		sdm_cbs.hotplug_cb = hotplug_handler,
-		sdm_service->RegisterCbs(idx, &sdm_cbs);
-		connector_id = sdm_service->GetConnectorId(idx);
-		head = drm_head_find_by_connector(b, connector_id);
-
-		if (head && head->display_id == idx)
-			continue;
-		else if (head) {
-			weston_log(" display_id %d is different from early display_id %d\n", idx, head->display_id);
-			drm_head_destroy(head);
-		}
-
-		struct DisplayConfigInfo display_config;
-		display_config.x_pixels		   = 0;
-		display_config.y_pixels		   = 0;
-		display_config.x_dpi		   = 96.0f;
-		display_config.y_dpi		   = 96.0f;
-		display_config.fps			   = 0;
-		display_config.vsync_period_ns = 0;
-		display_config.is_yuv		   = false;
-
-		bool rc = sdm_service->GetDisplayConfiguration(idx, &display_config);
-		if (!rc) {
-			weston_log("Fail to get preferred mode, use default mode instead!");
-			/* default 1080p, 60 fps */
-			display_config.x_pixels = 1920;
-			display_config.y_pixels = 1080;
-			display_config.fps = 60;
-		}
-		if(!drm_head_create(b, idx, &display_config, connector_id))
-			return -1;
-		x += display_config.x_pixels;
 	}
 
 	return 0;
@@ -2767,7 +2755,6 @@ drm_backend_create_heads(struct drm_backend *b)
 	early_get_connector_count(&conn_count);
 	if (!conn_count) {
 		weston_log("fail to get connector num \n");
-		return -1;
 	}
 
 	weston_log("create_outputs_early: conn_count=%d\n", conn_count);
@@ -2796,8 +2783,6 @@ drm_backend_create_heads(struct drm_backend *b)
 		x += display_config.x_pixels;
 	}
 
-	if (!x)
-		goto err;
 
 	/* Unregister early displays in order not to block SDM register
 	 * displays
@@ -2847,30 +2832,113 @@ udev_event_is_hotplug(struct drm_backend *b, struct udev_device *device)
 {
 	const char *sysnum;
 	const char *val;
+	const char *stat;
 
 	sysnum = udev_device_get_sysnum(device);
 	if (!sysnum || atoi(sysnum) != b->drm.id)
 		return 0;
 
 	val = udev_device_get_property_value(device, "HOTPLUG");
-	if (!val)
+	if (!val) {
+		val = udev_device_get_property_value(device, "MST_HOTPLUG");
 		return 0;
+	}
 
 	return strcmp(val, "1") == 0;
 }
 
 static int
+udev_event_is_conn_prop_change(struct drm_backend *b,
+			       struct udev_device *device,
+			       uint32_t *connector_id,
+			       uint32_t *property_id)
+{
+	const char *val;
+	int id;
+
+	val = udev_device_get_property_value(device, "CONNECTOR");
+	if (!val || !safe_strtoint(val, &id))
+		return 0;
+	else
+		*connector_id = id;
+
+	val = udev_device_get_property_value(device, "PROPERTY");
+	if (!val || !safe_strtoint(val, &id))
+		return 0;
+	else
+		*property_id = id;
+
+	return 1;
+}
+static int create_sdm_display(struct drm_backend *backend, int idx)
+{
+	sdm_cbs_t sdm_cbs;
+	struct DisplayConfigInfo display_config = {0};
+	struct drm_head* head = NULL;
+	uint32_t connector_id;
+	int rc;
+
+	rc = sdm_service->CreateDisplay(idx);
+	if (!rc)
+		weston_log("CreateDisplay: %d successful\n", idx);
+	else {
+		weston_log("CreateDisplay: %d fail\n", idx);
+		goto err_stat;
+	}
+
+	sdm_cbs.hotplug_cb = hotplug_handler,
+	sdm_service->RegisterCbs(idx, &sdm_cbs);
+	connector_id = sdm_service->GetConnectorId(idx);
+	head = drm_head_find_by_connector(backend, connector_id);
+	if (head && head->display_id == idx)
+		return 0;
+	else if (head) {
+		weston_log(" display_id %d is different from early display_id %d\n", idx, head->display_id);
+		drm_head_destroy(head);
+	}
+
+	get_display_config(idx, &display_config);
+	head = drm_head_create(backend, idx, &display_config, connector_id);
+	if(!head) {
+		sdm_service->DestroyDisplay(idx);
+		goto err_stat;
+	}
+
+	sdm_service->SetHead(idx, head);
+	return 0;
+
+err_stat:
+	sdm_service->UpdateDisplayStatus(idx, false);
+	return -1;
+}
 udev_drm_event(int fd, uint32_t mask, void *data)
 {
 	struct drm_backend *b = data;
 	struct udev_device *event;
+	uint32_t conn_id, prop_id;
+	uint32_t new_plugs;
+	int display_id = 0;
+	int ret = -1;
 
 	event = udev_monitor_receive_device(b->udev_monitor);
 	/* TODO (user): Need to hook this with SDM for hotplug support. */
 	// TODO (user): if (udev_event_is_hotplug(b, event))
 	// TODO (user):		update_outputs(b, event);
-	// if (udev_event_is_hotplug(b, event))
-	//	drm_backend_update_heads(b, event);
+	if (udev_event_is_hotplug(b, event)) {
+		if (udev_event_is_conn_prop_change(b, event, &conn_id, &prop_id)) {
+			weston_log("property change is not supported\n");
+		} else {
+			weston_log("hotplug happen\n");
+			new_plugs = sdm_service->UpdateDisplayInfos();
+			if (new_plugs > 0) {
+				weston_log("have new plug in %d displays\n", new_plugs);
+				for (int i = 0; i < new_plugs; i++) {
+					display_id = sdm_service->GetNewPlugDisplayID(i);
+					ret = create_sdm_display(b, display_id);
+				}
+			}
+		}
+	}
 	udev_device_unref(event);
 
 	return 1;

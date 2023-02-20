@@ -4,7 +4,7 @@ project('weston-extension',
 	default_options: [
 		'warning_level=3',
 		'c_std=gnu99',
-		'cpp_std=c++11',
+		'cpp_std=c++17',
 		'b_lundef=true',
 	],
 	meson_version: '>= 0.52.1',
