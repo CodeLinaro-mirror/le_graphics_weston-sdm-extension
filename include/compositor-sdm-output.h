@@ -50,6 +50,10 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include "config.h"
 #include <errno.h>
@@ -123,6 +127,7 @@ extern "C" {
 #define drm_debug(b, ...) \
 	weston_log_scope_printf((b)->debug, __VA_ARGS__)
 
+struct drm_head;
 struct drm_backend {
   struct weston_backend base;
   struct weston_compositor *compositor;
@@ -210,7 +215,8 @@ struct drm_output;
 
 struct drm_fb {
   struct drm_output *output;
-  uint32_t fb_id, stride, handle, size, ion_fd;
+  uint32_t fb_id, stride, handle, size;
+  int ion_fd;
   int fd;
   int is_client_buffer;
   struct weston_buffer_reference buffer_ref;

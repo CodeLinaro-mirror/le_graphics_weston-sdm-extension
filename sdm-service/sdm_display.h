@@ -25,6 +25,10 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef __SDM_DISPLAY_H__
@@ -109,13 +113,14 @@ public:
   virtual DisplayError Flush() = 0;
   virtual DisplayError SetDisplayState(DisplayState state) = 0;
   virtual DisplayError SetVSyncState(bool enable, struct drm_output *output) = 0;
+  virtual DisplayError SetHead(struct drm_head *head) = 0;
   virtual DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config) = 0;
   virtual DisplayError EnablePllUpdate(int32_t enable) = 0;
   virtual DisplayError UpdateDisplayPll(int32_t ppm) = 0;
   virtual DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info) = 0;
   virtual SdmDisplayIntfType GetDisplayIntfType() = 0;
 
-  virtual struct drm_output * GetOutput() = 0;
+  virtual struct drm_head * GetHead() = 0;
 
   static int GetDrmMasterFd();
 };
@@ -135,12 +140,13 @@ public:
   DisplayError Flush();
   DisplayError SetDisplayState(DisplayState state);
   DisplayError SetVSyncState(bool enable, struct drm_output *output);
+  DisplayError SetHead(struct drm_head *head);
   DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config);
   DisplayError EnablePllUpdate(int32_t enable);
   DisplayError UpdateDisplayPll(int32_t ppm);
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info);
 
-  struct drm_output * GetOutput() { return NULL; };
+  struct drm_head * GetHead() { return NULL; };
 };
 
 class SdmDisplay : public SdmDisplayInterface, DisplayEventHandler, SdmDisplayDebugger {
@@ -159,13 +165,14 @@ public:
   DisplayError Flush();
   DisplayError SetDisplayState(DisplayState state);
   DisplayError SetVSyncState(bool enable, struct drm_output *output);
+  DisplayError SetHead(struct drm_head *head);
   DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config);
   DisplayError EnablePllUpdate(int32_t enable);
   DisplayError UpdateDisplayPll(int32_t ppm);
 
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info);
 
-  struct drm_output * GetOutput() { return drm_output_; };
+  struct drm_head * GetHead() { return drm_head_; };
 
 protected:
   virtual DisplayError VSync(const DisplayEventVSync &vsync);
@@ -238,7 +245,7 @@ private:
   SdmLayerManager layer_manager_;
   SdmBufferManager buffer_manager_;
 
-  struct drm_output *drm_output_ = NULL;
+  struct drm_head *drm_head_ = NULL;
 };
 
 class SdmDisplayProxy {
@@ -266,6 +273,9 @@ public:
   DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config) {
     return display_intf_->GetDisplayConfiguration(display_config);
   }
+  DisplayError SetHead(struct drm_head *head) {
+    return display_intf_->SetHead(head);
+  }
   DisplayError RegisterCbs(int display_id, sdm_cbs_t *cbs) {
     hotplug_cb_ = cbs->hotplug_cb;
     return kErrorNone;
@@ -280,7 +290,7 @@ public:
     return display_intf_->GetHdrInfo(display_hdr_info);
   }
 
-  int HandleHotplug(bool connected);
+  DisplayError HandleHotplug(bool connected);
 
 private:
   // Uevent thread
