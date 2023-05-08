@@ -226,10 +226,14 @@ struct DisplayConfigInfo {
   bool     is_yuv;            //!< If the display output is in YUV format.
 };
 
+typedef void (*pageflip_cb_t)(unsigned int frame, unsigned int sec, unsigned int usec,
+           void *data);
+
 /*disp is the connector id*/
 typedef void (*hotplug_cb_t)(int disp, bool connected, struct drm_head *data);
 
 typedef struct sdm_cbs {
+  pageflip_cb_t pageflip_cb;
   hotplug_cb_t hotplug_cb;
 } sdm_cbs_t;
 

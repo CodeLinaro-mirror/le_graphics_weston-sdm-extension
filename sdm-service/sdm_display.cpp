@@ -170,6 +170,8 @@ SdmDisplay::SdmDisplay(int32_t display_id, DisplayType type, CoreInterface *core
   display_type_ = type;
   core_intf_    = core_intf;
   drm_head_   = NULL;
+  drm_output_   = NULL;
+  pageflip_cb_  = NULL;
 }
 
 SdmDisplay::~SdmDisplay() {
@@ -228,6 +230,19 @@ DisplayError SdmDisplay::VSync(const DisplayEventVSync &vsync) {
   return kErrorNone;
 }
 
+DisplayError SdmDisplay::VSync(int fd, unsigned int sequence, unsigned int tv_sec,
+                               unsigned int tv_usec, void *data) {
+    DLOGW("Not implemented");
+
+    return kErrorNone;
+}
+
+DisplayError SdmDisplay::PFlip(int fd, unsigned int sequence, unsigned int tv_sec,
+                               unsigned int tv_usec, void *data) {
+    pageflip_cb_(sequence, tv_sec, tv_usec, drm_output_);
+    return kErrorNone;
+}
+
 DisplayError SdmDisplay::Refresh() {
   if (client_event_handler_) {
     client_event_handler_->Refresh();
@@ -275,6 +290,14 @@ DisplayError SdmDisplay::SetDisplayState(DisplayState state) {
 
 DisplayError SdmDisplay::SetVSyncState(bool VSyncState, struct drm_output *output) {
   DisplayError error;
+
+  if (drm_output_ && drm_output_ != output) {
+    DLOGE("VSync state error: set different output for the same sdm display!");
+    return kErrorNone;
+  }
+
+  if (!drm_output_)
+    drm_output_ = output;
 
   error = display_intf_->SetVSyncState(VSyncState);
   if (error != kErrorNone) {
@@ -328,6 +351,15 @@ DisplayError SdmDisplay::GetDisplayConfiguration(struct DisplayConfigInfo *displ
   fps_                         = disp_config.fps;
 
   return kErrorNone;
+}
+
+DisplayError SdmDisplay::RegisterCb(int display_id, pageflip_cb_t pflipcb) {
+  DisplayError error = kErrorNone;
+
+  pageflip_cb_ = pflipcb;
+  display_id_  = display_id;
+
+  return error;
 }
 
 DisplayError SdmDisplay::FreeLayerGeometry(struct LayerGeometry *glayer) {
@@ -1601,6 +1633,9 @@ DisplayError SdmNullDisplay::SetHead(struct drm_head *head) {
   return kErrorNone;
 }
 DisplayError SdmNullDisplay::GetDisplayConfiguration(struct DisplayConfigInfo *display_config) {
+  return kErrorNone;
+}
+DisplayError SdmNullDisplay::RegisterCb(int display_id, pageflip_cb_t pflipcb) {
   return kErrorNone;
 }
 DisplayError SdmNullDisplay::EnablePllUpdate(int32_t enable) {

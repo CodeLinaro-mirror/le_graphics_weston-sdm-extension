@@ -115,6 +115,7 @@ public:
   virtual DisplayError SetVSyncState(bool enable, struct drm_output *output) = 0;
   virtual DisplayError SetHead(struct drm_head *head) = 0;
   virtual DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config) = 0;
+  virtual DisplayError RegisterCb(int display_id, pageflip_cb_t pflipcb) = 0;
   virtual DisplayError EnablePllUpdate(int32_t enable) = 0;
   virtual DisplayError UpdateDisplayPll(int32_t ppm) = 0;
   virtual DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info) = 0;
@@ -142,6 +143,7 @@ public:
   DisplayError SetVSyncState(bool enable, struct drm_output *output);
   DisplayError SetHead(struct drm_head *head);
   DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config);
+  DisplayError RegisterCb(int display_id, pageflip_cb_t pflipcb);
   DisplayError EnablePllUpdate(int32_t enable);
   DisplayError UpdateDisplayPll(int32_t ppm);
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info);
@@ -167,15 +169,23 @@ public:
   DisplayError SetVSyncState(bool enable, struct drm_output *output);
   DisplayError SetHead(struct drm_head *head);
   DisplayError GetDisplayConfiguration(struct DisplayConfigInfo *display_config);
+  DisplayError RegisterCb(int display_id, pageflip_cb_t pflipcb);
   DisplayError EnablePllUpdate(int32_t enable);
   DisplayError UpdateDisplayPll(int32_t ppm);
 
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info);
 
   struct drm_head * GetHead() { return drm_head_; };
+  struct drm_output * GetOutput() { return drm_output_; };
 
 protected:
   virtual DisplayError VSync(const DisplayEventVSync &vsync);
+  virtual DisplayError VSync(int fd, unsigned int sequence,
+                             unsigned int tv_sec, unsigned int tv_usec,
+                             void *data);
+  virtual DisplayError PFlip(int fd, unsigned int sequence,
+                             unsigned int tv_sec, unsigned int tv_usec,
+                             void *data);
   virtual DisplayError CECMessage(char *message);
   virtual DisplayError HandleEvent(DisplayEvent event);
   virtual DisplayError Refresh();
@@ -246,6 +256,8 @@ private:
   SdmBufferManager buffer_manager_;
 
   struct drm_head *drm_head_ = NULL;
+  struct drm_output *drm_output_ = NULL;
+  pageflip_cb_t pageflip_cb_ = NULL;
 };
 
 class SdmDisplayProxy {
@@ -278,7 +290,7 @@ public:
   }
   DisplayError RegisterCbs(int display_id, sdm_cbs_t *cbs) {
     hotplug_cb_ = cbs->hotplug_cb;
-    return kErrorNone;
+    return display_intf_->RegisterCb(display_id, cbs->pageflip_cb);
   }
   DisplayError EnablePllUpdate(int32_t enable) {
     return display_intf_->EnablePllUpdate(enable);
