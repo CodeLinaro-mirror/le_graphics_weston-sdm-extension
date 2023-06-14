@@ -370,7 +370,7 @@ int early_create_display(uint32_t display_id, struct EarlyDisplayInfo *dispinfo)
   drm_atomic_intf_->Perform(DRMOps::CONNECTOR_SET_POWER_MODE,
     token_.conn_id, 0 /*sde_drm::DRMPowerMode::ON*/);
 
-  ret = drm_atomic_intf_->Commit(true /* synchronous */, true /* retain_planes */);
+  ret = drm_atomic_intf_->Commit(true /* synchronous */, true /* retain_planes */, NULL);
   if (ret) {
     weston_log("Set power mode on failed for connector %d\n", token_.conn_id);
     dispinfo->early_enable = false;
@@ -779,7 +779,7 @@ int early_commit(struct drm_output *output) {
   drm_atomic_intf_->Perform(DRMOps::CONNECTOR_GET_RETIRE_FENCE,
     early_disp->connector_id, &retire_fence);
 
-  int ret = drm_atomic_intf_->Commit(false, false);
+  int ret = drm_atomic_intf_->Commit(true, false, NULL);
   if(ret) {
     weston_log("early commit failed\n");
     if(retire_fence > 0)

@@ -523,6 +523,9 @@ static void
 on_pageflip(struct drm_output *output);
 
 static int
+on_pageflip_vsync(int fd, uint32_t mask, void *data);
+
+static int
 retire_fence_cb(int fd, uint32_t mask, void *data)
 {
 	struct drm_output *output = (struct drm_output *) data;
@@ -762,12 +765,14 @@ drm_output_repaint_early(struct weston_output *output_base)
 		wl_list_init(&output->early_layer_list);
 		wl_event_source_timer_update(output->finish_frame_timer, 16);
 	} else {
-		struct wl_event_loop *loop =
+		if (output->retire_fence_fd > 0) {
+			struct wl_event_loop *loop =
 				wl_display_get_event_loop(output->base.compositor->wl_display);
 
-		output->retire_fence_source = wl_event_loop_add_fd(loop,
+			output->retire_fence_source = wl_event_loop_add_fd(loop,
 				output->retire_fence_fd, WL_EVENT_READABLE,
 				retire_fence_early_cb, output);
+		}
 	}
 
 	/*
@@ -806,6 +811,7 @@ output_repaint(struct weston_output *output_base,
 	}
 	assert(wl_list_empty(&output->plane_flip_list));
 
+	sdm_service->SetVSyncState(output->display_id, ENABLE, output);
 	if (output->prev_layer_none_commit && output->layer_none_commit)
 		weston_log("skip commit if two consecutive frames have no layers\n");
 	else if (output->layer_none_commit){
@@ -850,7 +856,6 @@ output_repaint(struct weston_output *output_base,
 					retire_fence_cb, output);
 		}
 	}
-
 	return 0;
 }
 
@@ -1011,19 +1016,135 @@ drm_output_update_msc(struct drm_output *output, unsigned int seq)
 }
 
 static void
+pageflip_handler(unsigned int frame, unsigned int sec, unsigned int usec, void *data)
+{
+	struct drm_output *output = (struct drm_output *) data;
+	uint64_t v = 1;
+
+	output->last_vblank.frame = frame;
+	output->last_vblank.sec = sec;
+	output->last_vblank.usec = usec;
+
+	write(output->pageflip_ev_fd, &v, sizeof v);
+}
+
+static int
+drm_output_enable_pageflip(struct drm_output *output)
+{
+	struct wl_event_loop *loop;
+
+	output->pageflip_ev_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+	if (output->pageflip_ev_fd < 0){
+		return -1;
+	}
+
+	loop = wl_display_get_event_loop(output->base.compositor->wl_display);
+
+	output->pageflip_ev_source = wl_event_loop_add_fd(loop, output->pageflip_ev_fd,
+		WL_EVENT_READABLE, on_pageflip_vsync, output);
+
+	return 0;
+}
+
+static void
+drm_output_disable_pageflip(struct drm_output *output)
+{
+	if (output->pageflip_ev_source != NULL) {
+		wl_event_source_remove(output->pageflip_ev_source);
+		output->pageflip_ev_source = NULL;
+	}
+
+	if (output->pageflip_ev_fd != -1) {
+		close(output->pageflip_ev_fd);
+		output->pageflip_ev_fd = -1;
+	}
+}
+
+static void
 drm_output_deinit(struct weston_output *base);
 
 static void
 drm_output_destroy(struct weston_output *output_base);
 
+/**
+ * process pageflip triggered by fence
+ */
 static void
 on_pageflip(struct drm_output *output)
 {
 	struct timespec ts;
 	uint32_t flags = WP_PRESENTATION_FEEDBACK_KIND_VSYNC |
-			WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
-			WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION;
+			 WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+			 WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION;
+		struct sdm_layer *sdm_layer, *next_sdm_layer;
+
+	drm_output_update_msc(output, output->last_vblank.frame++);
+
+	/*
+	* After switching to sdm repaint, need to destroy
+	* committed early layers if there is any
+	*/
+	if (!wl_list_empty(&output->commited_early_list)) {
+		struct early_layer *early_layer, *next_early_layer;
+
+		wl_list_for_each_safe(early_layer, next_early_layer, &output->commited_early_list, link) {
+			destroy_early_layer(early_layer);
+		}
+	}
+
+	/* We don't set page_flip_pending on start_repaint_loop, in that case
+	* we just want to page flip to the current buffer to get an accurate
+	* timestamp */
+	if (output->frame_pending) {
+		drm_output_release_fb(output, output->current);
+		output->current = output->next;
+		output->next = NULL;
+		output->frame_pending = 0;
+
+		wl_list_for_each_safe(sdm_layer, next_sdm_layer, &output->commited_layer_list, link) {
+			destroy_sdm_layer(sdm_layer);
+		}
+
+		assert(wl_list_empty(&output->commited_layer_list));
+		wl_list_insert_list(&output->commited_layer_list, &output->sdm_layer_list);
+		wl_list_init(&output->sdm_layer_list);
+	}
+
+	if (output->destroy_pending) {
+		output->disable_pending = 0;
+		output->destroy_pending = 0;
+		drm_output_destroy(&output->base);
+	} else if (output->disable_pending) {
+		output->disable_pending = 0;
+		weston_output_disable(&output->base);
+	} else if (!output->frame_pending) {
+		ts.tv_sec = output->last_vblank.sec;
+		ts.tv_nsec = output->last_vblank.usec * 1000;
+
+		weston_output_finish_frame(&output->base, &ts, flags);
+
+		/* We can't call this from frame_notify, because the output's
+		* repaint needed flag is cleared just after that */
+		if (output->recorder)
+		weston_output_schedule_repaint(&output->base);
+	}
+}
+
+/**
+ * process pageflip triggered by vblank
+ */
+static int
+on_pageflip_vsync(int fd, uint32_t mask, void *data)
+{
+	struct timespec ts;
+	struct drm_output *output = (struct drm_output *) data;
+	uint32_t flags = WP_PRESENTATION_FEEDBACK_KIND_VSYNC |
+			 WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+			 WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION;
 	struct sdm_layer *sdm_layer, *next_sdm_layer;
+	uint64_t v = 1;
+
+	read(output->pageflip_ev_fd, &v, sizeof v);
 
 	drm_output_update_msc(output, output->last_vblank.frame++);
 
@@ -1075,6 +1196,7 @@ on_pageflip(struct drm_output *output)
 		if (output->recorder)
 			weston_output_schedule_repaint(&output->base);
 	}
+	return 0;
 }
 
 static int
@@ -1335,6 +1457,11 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 		is_skip = is_skip_view(ev, output);
 
 		sdm_layer = create_sdm_layer(output, ev, &above_opaque, is_cursor, is_skip);
+		if (sdm_layer == NULL) {
+			weston_log("Create sdm layer failed.\n");
+			goto err_out;
+		}
+
 		wl_list_insert(output->sdm_layer_list.prev, &sdm_layer->link);
 
 		output->view_count++;
@@ -1507,6 +1634,8 @@ drm_output_destroy(struct weston_output *output_base)
 
 	drm_mode_list_destroy(b, &output->base.mode_list);
 
+	drm_output_disable_pageflip(output);
+
 	weston_output_release(&output->base);
 
 	free(output);
@@ -1618,7 +1747,7 @@ init_drm_early(struct drm_backend *b)
 	}
 
 	/* use render node to create gbm device */
-	b->render_fd = drmOpenWithType("msm_drm", 0, DRM_NODE_RENDER);
+	b->render_fd = drmOpen("msm_drm", NULL);
 	if (b->render_fd < 0) {
 		weston_log("failed to open drm render device (%d)\n", b->render_fd);
 		return -1;
@@ -2698,6 +2827,11 @@ drm_output_create(struct weston_compositor *compositor, const char *name)
 
 	weston_compositor_add_pending_output(&output->base, b->compositor);
 
+	if (0 > drm_output_enable_pageflip(output)) {
+		weston_log("Failed to create pageflip event\n");
+		return NULL;
+	}
+
 	return &output->base;
 }
 
@@ -2887,6 +3021,7 @@ static int create_sdm_display(struct drm_backend *backend, int idx)
 	}
 
 	sdm_cbs.hotplug_cb = hotplug_handler,
+	sdm_cbs.pageflip_cb = (pageflip_cb_t)pageflip_handler;
 	sdm_service->RegisterCbs(idx, &sdm_cbs);
 	connector_id = sdm_service->GetConnectorId(idx);
 	head = drm_head_find_by_connector(backend, connector_id);
@@ -2973,7 +3108,8 @@ drm_destroy(struct weston_compositor *ec)
 	weston_launcher_destroy(ec->launcher);
 
 	close(b->drm.fd);
-	close(b->render_fd);
+	//close(b->render_fd);
+	drmClose(b->render_fd);
 	free(b->drm.filename);
 	free(b);
 }
@@ -3109,7 +3245,7 @@ create_recorder(struct drm_backend *b, int width, int height,
 	int fd;
 	drm_magic_t magic;
 
-	fd = open(b->drm.filename, O_RDWR | O_CLOEXEC);
+	fd = drmOpen(b->drm.filename, O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		return NULL;
 
