@@ -28,7 +28,7 @@
 */
 
 #include <errno.h>
-#include <sync/sync.h>
+#include <libsync.h>
 #include <string.h>
 
 #include "sdm_display_debugger.h"

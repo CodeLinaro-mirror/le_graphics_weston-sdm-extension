@@ -55,7 +55,7 @@
  * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
-#include "config.h"
+#include <config.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <ctype.h>

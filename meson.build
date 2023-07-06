@@ -20,6 +20,7 @@ dir_module_weston = join_paths(dir_lib, 'weston')
 dir_module_libweston = join_paths(dir_lib, 'libweston-@0@'.format(libweston_major))
 
 common_inc = include_directories('.')
+common_inc = include_directories('redhat-linux-build/')
 
 config_h = configuration_data()
 
@@ -100,7 +101,7 @@ dep_libcutils = cc.find_library('cutils')
 dep_gbm = dependency('gbm', required: false)
 dep_libdrmutils = cxx.find_library('drmutils')
 dep_libsdedrm = cxx.find_library('sdedrm')
-dep_libsync = cc.find_library('sync')
+#dep_libsync = cc.find_library('sync')
 # Depends on specific libraries from weston
 dep_libweston = dependency('libweston-10')
 dep_libinput_backend = cc.find_library('libinput-backend')
