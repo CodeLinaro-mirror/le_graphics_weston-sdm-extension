@@ -1,6 +1,6 @@
 dep_libsdmcore = cxx.find_library('sdmcore')
 dep_libsdmutils = cxx.find_library('sdmutils')
-dep_libhdr = cxx.find_library('hdr_tm')
+#dep_libhdr = cxx.find_library('hdr_tm')
 dep_libdisplaydebug =  cxx.find_library('displaydebug')
 
 srcs_sdm = [
@@ -18,15 +18,17 @@ deps_sdm = [
 	dep_libsdmcore,
 	dep_libsdmutils,
 	dep_libdrmutils,
-	dep_libhdr,
+	#	dep_libhdr,
 	dep_libdrm,
 	dep_gbm,
 	dep_libdisplaydebug,
 	dep_libweston_private,
-	dep_libsync,
+	#	dep_libsync,
 	dep_threads,
 	dep_gbm_buffer_backend,
 ]
+
+
 
 sdm_service = shared_library(
 	'sdm-service',
