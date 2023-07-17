@@ -20,7 +20,7 @@ dir_module_weston = join_paths(dir_lib, 'weston')
 dir_module_libweston = join_paths(dir_lib, 'libweston-@0@'.format(libweston_major))
 
 common_inc = include_directories('.')
-common_inc = include_directories('redhat-linux-build/')
+#common_inc = include_directories('redhat-linux-build/')
 
 config_h = configuration_data()
 
