@@ -1335,6 +1335,11 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 		is_skip = is_skip_view(ev, output);
 
 		sdm_layer = create_sdm_layer(output, ev, &above_opaque, is_cursor, is_skip);
+		if (sdm_layer == NULL) {
+			weston_log("Create sdm layer failed.\n");
+			goto err_out;
+		}
+
 		wl_list_insert(output->sdm_layer_list.prev, &sdm_layer->link);
 
 		output->view_count++;
