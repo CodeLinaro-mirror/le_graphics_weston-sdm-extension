@@ -48,7 +48,7 @@
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -221,6 +221,9 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	struct drm_mode_destroy_dumb destroy_arg;
 	struct drm_mode_map_dumb map_arg;
 	struct drm_prime_handle prime_arg;
+	struct gbm_bo *bo;
+	uint32_t handles[4] = {0}, pitches[4] = {0}, offsets[4] = {0};
+	void *map_data = NULL;
 
 	fb = zalloc(sizeof *fb);
 	if (!fb)
@@ -231,48 +234,41 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	create_arg.width = width;
 	create_arg.height = height;
 
-	ret = drmIoctl(b->drm.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_arg);
-	if (ret)
+	bo = gbm_bo_create(b->gbm, width, height, b->format, GBM_BO_USE_SCANOUT);
+	if (!bo)
 		goto err_fb;
 
-	fb->handle = create_arg.handle;
-	fb->stride = create_arg.pitch;
-	fb->size = create_arg.size;
+	fb->handle = gbm_bo_get_handle(bo).u32; //create_arg.handle;
+	fb->stride = gbm_bo_get_stride(bo); //create_arg.pitch;
+	fb->size = gbm_perform(GBM_PERFORM_GET_BO_SIZE, bo, &(fb->size));//create_arg.size;
 	fb->fd = b->drm.fd;
 
 	memset(&prime_arg, 0, sizeof prime_arg);
 	prime_arg.handle = fb->handle;
 
-	ret = drmIoctl(b->drm.fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime_arg);
-	if (ret)
-	  goto err_bo;
+	fb->ion_fd = gbm_bo_get_fd(bo);//prime_arg.fd;
+	fb->bo = bo;
 
-	fb->ion_fd = prime_arg.fd;
+	handles[0] = fb->handle;
+	pitches[0] = fb->stride;
 
-	ret = drmModeAddFB(b->drm.fd, width, height, 24, 32,
-			   fb->stride, fb->handle, &fb->fb_id);
+	weston_log("fb w %d h %d stride %d handle %d drmfd %d\n", width, height, fb->stride, fb->handle, b->drm.fd);
+	weston_log("ret %d\n", ret);
 	if (ret)
 		goto err_bo;
 
-	memset(&map_arg, 0, sizeof map_arg);
-	map_arg.handle = fb->handle;
-	ret = drmIoctl(fb->fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
-	if (ret)
-		goto err_add_fb;
-
-	fb->map = mmap(0, fb->size, PROT_WRITE,
-			   MAP_SHARED, b->drm.fd, map_arg.offset);
+	weston_log("fb map\n");
+	fb->map = gbm_bo_map(fb->bo, 0, 0, width, height, GBM_BO_USE_WRITE, &fb->stride, &map_data);
 	if (fb->map == MAP_FAILED)
 		goto err_add_fb;
 
+	weston_log("fb end\n");
 	return fb;
 
 err_add_fb:
-	drmModeRmFB(b->drm.fd, fb->fb_id);
 err_bo:
-	memset(&destroy_arg, 0, sizeof(destroy_arg));
-	destroy_arg.handle = create_arg.handle;
-	drmIoctl(b->drm.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
+	gbm_bo_destroy(bo);
+	close(fb->ion_fd);
 err_fb:
 	free(fb);
 	return NULL;
@@ -295,7 +291,8 @@ drm_fb_destroy_dumb(struct drm_fb *fb)
 
 	memset(&destroy_arg, 0, sizeof(destroy_arg));
 	destroy_arg.handle = fb->handle;
-	drmIoctl(fb->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
+	gbm_bo_destroy(fb->bo);
+	close(fb->ion_fd);
 
 	free(fb);
 }
