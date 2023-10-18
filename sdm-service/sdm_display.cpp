@@ -430,6 +430,8 @@ DisplayError SdmDisplay::PopulateLayerGeometryOnToLayerStack(struct drm_output *
   layer_buffer->flags.interlace = false;
   layer_buffer->flags.secure_display = false;
   layer_buffer->flags.secure_camera = false;
+
+  layer_buffer->acquire_fence_fd = layer_geometry->acquire_fence_fd;
   /* 2. Fill layer information */
   if (layer_geometry->composition == SDM_COMPOSITION_FB_TARGET)
     layer->composition = sdm::kCompositionGPUTarget;
@@ -534,6 +536,7 @@ int SdmDisplay::PrepareFbLayerGeometry(struct drm_output *output,
   fb_layer->height = output->base.current_mode->height;
   fb_layer->unaligned_width = output->base.current_mode->width;
   fb_layer->unaligned_height = output->base.current_mode->height;
+  fb_layer->acquire_fence_fd = -1;
 
   fb_layer->format = GetMappedFormatFromGbm(output->format);
   fb_layer->composition = SDM_COMPOSITION_FB_TARGET;
@@ -662,6 +665,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
   layer->fb_id = -1;
   layer->format = SDM_BUFFER_FORMAT_RGBX_8888;
   layer->transform = SDM_TRANSFORM_NORMAL;
+  layer->acquire_fence_fd = -1;
 
   if (!sdm_layer->is_skip) {
     struct gbm_bo *bo;
@@ -780,6 +784,11 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
 
       // Set to true if incoming layer has HDR support and Display supports HDR functionality
       layer->flags.hdr_present = hdr_layer && hdr_supported_;
+    }
+
+    /*set input fence*/
+    if (es->acquire_fence_fd >= 0) {
+      layer->acquire_fence_fd = es->acquire_fence_fd;
     }
   }
 

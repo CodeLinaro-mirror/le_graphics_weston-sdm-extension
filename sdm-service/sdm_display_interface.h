@@ -168,6 +168,7 @@ struct LayerGeometry {
 
   /*Hook for storing information relative to compositor. DO NOT MODIFY IT!!!*/
   const void *usr_data;
+  int acquire_fence_fd;
 };
 
 /* Scaling property */
