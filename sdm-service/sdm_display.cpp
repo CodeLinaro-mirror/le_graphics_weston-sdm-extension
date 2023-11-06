@@ -120,6 +120,8 @@ void SdmLayerManager::destroy(struct wl_listener *listener, void *data)
 
   std::lock_guard<std::mutex> lock(layer->layer_manager_->lock_);
   layer->layer_manager_->layer_cache_.erase(view);
+  wl_list_remove(&layer->destroy_listener_.link);
+
   delete layer;
 }
 
@@ -153,6 +155,8 @@ void SdmBufferManager::destroy_notify(struct wl_listener *listener, void *data)
 
   std::lock_guard<std::mutex> lock(sdm_buf->buffer_manager->buffer_lock);
   sdm_buf->buffer_manager->buffer_ids.erase(sdm_buf->fd);
+  wl_list_remove(&sdm_buf->destroy_listener.link);
+
   delete sdm_buf;
 }
 
