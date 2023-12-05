@@ -48,7 +48,7 @@
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -687,6 +687,11 @@ finish_init(void *data)
 			if (linux_dmabuf_setup(b->compositor) < 0)
 				weston_log("Error: initializing dmabuf "
 						"support failed.\n");
+		}
+		if (b->compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC) {
+			if (linux_explicit_synchronization_setup(b->compositor) < 0)
+				weston_log("Error: initializing explicit "
+				   " synchronization support failed.\n");
 		}
 		if (screen_capture_c_interface.setup(b->compositor) < 0)
 				weston_log("Error: initializing screen_capture_setup "
@@ -3179,11 +3184,14 @@ switch_to_gl_renderer(struct drm_backend *b)
 {
 	struct drm_output *output;
 	bool dmabuf_support_inited;
+	bool linux_explicit_sync_inited;
 
 	if (!b->use_pixman)
 		return;
 
 	dmabuf_support_inited = !!b->compositor->renderer->import_dmabuf;
+	linux_explicit_sync_inited =
+		b->compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC;
 
 	weston_log("Switching to GL renderer\n");
 
@@ -3215,6 +3223,12 @@ switch_to_gl_renderer(struct drm_backend *b)
 		if (linux_dmabuf_setup(b->compositor) < 0)
 			weston_log("Error: initializing dmabuf "
 					"support failed.\n");
+	}
+	if (!linux_explicit_sync_inited &&
+	    (b->compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC)) {
+		if (linux_explicit_synchronization_setup(b->compositor) < 0)
+			weston_log("Error: initializing explicit "
+				   " synchronization support failed.\n");
 	}
 }
 
