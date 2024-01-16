@@ -52,7 +52,7 @@
  * SOFTWARE.
  *
  * Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include "config.h"
@@ -85,6 +85,7 @@ extern "C" {
 #include <libweston-private/libweston-internal.h>
 #include <libweston-private/backend.h>
 #include <libweston-private/linux-dmabuf.h>
+#include <libweston-private/linux-explicit-synchronization.h>
 #include <gbm-buffer-backend.h>
 #include <screen-capture.h>
 #ifdef __cplusplus
