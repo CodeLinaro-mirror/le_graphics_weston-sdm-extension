@@ -1243,7 +1243,10 @@ is_skip_view(struct weston_view *ev, struct drm_output *output)
 	struct weston_surface *es = ev->surface;
 	struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
 	bool skip = false;
-
+	
+	/* tmp workaround, force GPU */
+	return true;
+	
 	/* Don't support hw rotate now */
 	if (viewport->buffer.transform != output->base.transform)
 		return true;
