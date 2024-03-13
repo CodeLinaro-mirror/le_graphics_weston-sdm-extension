@@ -8,11 +8,12 @@ Source0: %{name}-%{version}.tar.gz
 
 %global apiver 10
 
-BuildRequires: meson cairo pixman 
+BuildRequires: meson cairo pixman
 BuildRequires: libxkbcommon libgbm libgbm-dev libinput
 BuildRequires: display-hal-dev display-hal display-noship display-ship-dev
-BuildRequires: libwayland-egl libwayland-server libwayland-client wayland-devel wayland-protocols-devel 
+BuildRequires: libwayland-egl libwayland-server libwayland-client wayland-devel wayland-protocols-devel
 BuildRequires: weston weston-libs weston-devel
+BuildRequires: bootkpi-logging
 
 %description
 Provides QTI specific header files

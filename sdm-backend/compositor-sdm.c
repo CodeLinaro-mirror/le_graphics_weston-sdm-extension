@@ -48,7 +48,7 @@
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -101,6 +101,7 @@
 #include "pll-server-protocol.h"
 #include "presentation-time-server-protocol.h"
 #include "gbm-buffer-backend-server-protocol.h"
+#include "bootkpi/logging.h"
 
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
@@ -531,7 +532,8 @@ retire_fence_cb(int fd, uint32_t mask, void *data)
 
 	if (first_fence) {
 		first_fence = false;
-		weston_place_marker("W - first frame have been displayed");
+		bootkpi_log_init();
+		bootkpi_log_line("W - first frame have been displayed");
 	}
 
 	wl_event_source_remove(output->retire_fence_source);
@@ -560,7 +562,8 @@ retire_fence_early_cb(int fd, uint32_t mask, void *data)
 
 	if (first_fence) {
 		first_fence = false;
-		weston_place_marker("W - first early frame have been displayed");
+		bootkpi_log_init();
+		bootkpi_log_line("W - first early frame have been displayed");
 	}
 
 	wl_event_source_remove(output->retire_fence_source);
@@ -729,7 +732,8 @@ finish_init(void *data)
 out:
 	b->sdm_repaint = true;
 	weston_log("full initialization finished, switched to sdm repaint!\n");
-	weston_place_marker("W - backend full ready");
+	bootkpi_log_init();
+	bootkpi_log_line("W - backend full ready");
 	return 0;
 }
 
@@ -749,7 +753,8 @@ drm_output_repaint_early(struct weston_output *output_base)
 		ret = early_commit(output);
 		if (first_commit) {
 			first_commit = false;
-			weston_place_marker("W - first early commit submitted");
+			bootkpi_log_init();
+			bootkpi_log_line("W - first early commit submitted");
 		}
 	}
 
@@ -818,7 +823,8 @@ output_repaint(struct weston_output *output_base,
 
 		if (!commit) {
 			commit = true;
-			weston_place_marker("W - first commit submitted");
+			bootkpi_log_init();
+			bootkpi_log_line("W - first commit submitted");
 		}
 	}
 
