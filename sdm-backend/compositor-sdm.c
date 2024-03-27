@@ -3602,6 +3602,7 @@ drm_backend_create(struct weston_compositor *compositor,
 	const char *seat_id = default_seat;
 	const char *session_seat;
 	int ret;
+	struct weston_head *base, *next;
 
 	session_seat = getenv("XDG_SEAT");
 	if (session_seat)
@@ -3734,6 +3735,10 @@ drm_backend_create(struct weston_compositor *compositor,
 			return b;
 		} else {
 			free(full_init_param);
+			wl_list_for_each_safe(base, next, &compositor->head_list, compositor_link) {
+				drm_display_destroy(to_drm_head(base));
+				drm_head_destroy(to_drm_head(base));
+			}
 			goto err_base;
 		}
 	}
@@ -3749,6 +3754,7 @@ err_launcher:
 err_compositor:
 	weston_compositor_shutdown(compositor);
 err_base:
+	weston_log_scope_destroy(b->debug);
 	free(b);
 	return NULL;
 }
