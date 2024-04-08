@@ -727,8 +727,7 @@ finish_init(void *data)
 	}
 
 	wl_event_source_remove(b->finish_full_init);
-
-	early_drm_display_deinit(false);
+	early_drm_display_deinit(false, b->drm.fd);
 out:
 	b->sdm_repaint = true;
 	weston_log("full initialization finished, switched to sdm repaint!\n");
@@ -3103,7 +3102,7 @@ drm_destroy(struct weston_compositor *ec)
 	if (sdm_service)
 		sdm_service->DestroyCore();
 	if(b->early_boot)
-		early_drm_display_deinit(true);
+		early_drm_display_deinit(true, b->drm.fd);
 
 	if (b->gbm)
 		gbm_device_destroy(b->gbm);
@@ -3746,7 +3745,7 @@ drm_backend_create(struct weston_compositor *compositor,
 	return b;
 
 err_display:
-	early_drm_display_deinit(true);
+	early_drm_display_deinit(true, b->drm.fd);
 err_sprite:
 	gbm_device_destroy(b->gbm);
 err_launcher:
