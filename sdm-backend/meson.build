@@ -96,3 +96,18 @@ plugin_drm = shared_library(
 	install: true,
 	install_dir: dir_module_libweston
 )
+
+deps_pm_ds = [
+	dep_libsystemd,
+	dep_libweston_private,
+]
+
+plugin_compositor_pm_ds = shared_library(
+	'compositor-pm-ds',
+	'compositor-pm-ds.c',
+	include_directories: common_inc,
+	dependencies: deps_pm_ds,
+	name_prefix: '',
+	install: true,
+	install_dir: dir_module_weston
+)
