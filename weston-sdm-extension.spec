@@ -41,4 +41,4 @@ export CFLAGS="-I/usr/include/gbm"
 %{_libdir}/libweston-%{apiver}/sdm-service.so
 %{_libdir}/libweston-%{apiver}/gbm-buffer-backend.so
 %{_libdir}/libweston-%{apiver}/screen-capture.so
-
+%{_libdir}/weston/compositor-pm-ds.so
