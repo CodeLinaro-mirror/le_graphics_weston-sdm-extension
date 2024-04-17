@@ -225,7 +225,8 @@ DisplayError SdmDisplay::DestroyDisplay() {
   error = core_intf_->DestroyDisplay(display_intf_);
   display_intf_ = NULL;
 
-  fb_layer_.buffer_map->buffer_map.clear();
+  if (fb_layer_.buffer_map)
+    fb_layer_.buffer_map->buffer_map.clear();
 
   return error;
 }
