@@ -43,6 +43,21 @@ struct  dbus_notifier {
 
 static int weston_compositor_dbus_process(sd_bus_message *sMessage, void *userdata, sd_bus_error *sError);
 
+static void
+weston_compositor_put_dbus(struct dbus_context *context)
+{
+	if (!context) {
+		weston_log(" Null context \n");
+		return;
+	}
+
+	context->sDbusFd.fd = -1;
+	if (context->sBus) {
+		sd_bus_unref(context->sBus);
+		context->sBus = NULL;
+	}
+}
+
 static int32_t
 weston_compositor_get_dbus(struct dbus_context *context)
 {
@@ -68,8 +83,7 @@ weston_compositor_get_dbus(struct dbus_context *context)
 	context->sDbusFd.fd = sd_bus_get_fd(context->sBus);
 	if (context->sDbusFd.fd < 0) {
 		weston_log("sd_bus_get_fd fails %s\n", strerror(0 - context->sDbusFd.fd));
-		sd_bus_unref(context->sBus);
-		context->sBus = NULL;
+		weston_compositor_put_dbus(context);
 		return E_NOK;
 	}
 
@@ -78,25 +92,6 @@ weston_compositor_get_dbus(struct dbus_context *context)
 	ret = EOK;
 
 	return ret;
-}
-
-static void
-weston_compositor_put_dbus(struct dbus_context *context)
-{
-	if (!context) {
-		weston_log(" Null context \n");
-		return;
-	}
-
-	if (context->sDbusFd.fd >= 0) {
-		if (close(context->sDbusFd.fd) != EOK) {
-			weston_log("close dbus fd fail, errno %s\n", strerror(0 - errno));
-		} else {
-			context->sDbusFd.fd = -1;
-			sd_bus_unref(context->sBus);
-			context->sBus = NULL;
-		}
-	}
 }
 
 static int32_t
