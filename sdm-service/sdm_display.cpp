@@ -52,7 +52,7 @@
  * SOFTWARE.
  *
  * Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include <assert.h>
@@ -279,11 +279,12 @@ DisplayError SdmDisplay::HandleEvent(DisplayEvent event) {
 
 DisplayError SdmDisplay::SetDisplayState(DisplayState state) {
   DisplayError error;
-  int release_fence = -1;
+  bool teardown = false;
 
-  error = display_intf_->SetDisplayState(state, false /* teardown */, &release_fence);
-  if (release_fence >= 0)
-    close(release_fence);
+  if (state == kStateOff)
+    teardown = true;
+
+  error = display_intf_->SetDisplayState(state, teardown, nullptr);
 
   if (error != kErrorNone) {
     DLOGE("function failed. Error = %d", error);
