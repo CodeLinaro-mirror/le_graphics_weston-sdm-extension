@@ -29,6 +29,7 @@ export LDFLAGS="%{?build_ldflags} -Wl,-z,undefs -Wl,-rpath,%{?_libdir}/libweston
 export CPPFLAGS="-I/usr/include -I/usr/include/core -I/usr/include/drm -I/usr/include/gbm -fno-operator-names"
 export CFLAGS="-I/usr/include/gbm"
 %meson
+%meson -Denable-pageflip=true
 %meson_build
 
 %install
