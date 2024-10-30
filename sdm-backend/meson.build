@@ -99,17 +99,38 @@ plugin_drm = shared_library(
 	install_rpath: '$ORIGIN'
 )
 
-deps_pm_ds = [
-	dep_libsystemd,
-	dep_libweston_private,
-]
+if get_option('enable-pm-dbus')
+	deps_pm_ds_dbus = [
+		dep_libsystemd,
+		dep_libweston_private,
+	]
 
-plugin_compositor_pm_ds = shared_library(
-	'compositor-pm-ds',
-	'compositor-pm-ds.c',
-	include_directories: common_inc,
-	dependencies: deps_pm_ds,
-	name_prefix: '',
-	install: true,
-	install_dir: dir_module_weston
-)
+	plugin_compositor_pm_ds_dbus = shared_library(
+		'compositor-pm-ds-dbus',
+		'compositor-pm-ds-dbus.c',
+		include_directories: common_inc,
+		dependencies: deps_pm_ds_dbus,
+		name_prefix: '',
+		install: true,
+		install_dir: dir_module_weston
+	)
+endif
+
+if get_option('enable-pm-snservice')
+	deps_pm_ds_snservice = [
+		dep_libpm_client,
+		dep_libsystemd,
+		dep_libweston_private,
+	]
+
+	plugin_compositor_pm_ds_snservice = shared_library(
+		'compositor-pm-ds-snservice',
+		'compositor-pm-ds-snservice.c',
+		include_directories: common_inc,
+		dependencies: deps_pm_ds_snservice,
+		name_prefix: '',
+		install: true,
+		install_dir: dir_module_weston
+	)
+endif
+

@@ -108,11 +108,14 @@ dep_libweston = dependency('libweston-13')
 dep_libinput_backend = cc.find_library('libinput-backend')
 dep_session_helper = cc.find_library('session-helper')
 dep_backlight = cc.find_library('backlight')
+if get_option('enable-pm-snservice')
+	dep_libpm_client = cc.find_library('libpm-client')
+endif
 
 dep_libdrm_version = dep_libdrm.version()
 if dep_libdrm_version.version_compare('>=2.4.107')
-  message('Found libdrm with human format modifier support.')
-  config_h.set('HAVE_HUMAN_FORMAT_MODIFIER', '1')
+	message('Found libdrm with human format modifier support.')
+	config_h.set('HAVE_HUMAN_FORMAT_MODIFIER', '1')
 endif
 
 deps_for_libweston_users = [
