@@ -11,7 +11,7 @@ project('weston-extension',
 	license: 'BSD',
 )
 
-libweston_major = 10
+libweston_major = 13
 version_weston_extension = meson.project_version()
 
 dir_prefix = get_option('prefix')
@@ -35,7 +35,7 @@ global_args_maybe = [
 	'-Wno-missing-field-initializers',
 	'-Wno-pedantic',
 	'-Wundef',
-	'-fvisibility=hidden',
+	'-g',
 ]
 foreach a : global_args_maybe
 	if cc.has_argument(a)
@@ -104,7 +104,7 @@ dep_libdrmutils = cxx.find_library('drmutils')
 dep_libsdedrm = cxx.find_library('sdedrm')
 #dep_libsync = cc.find_library('sync')
 # Depends on specific libraries from weston
-dep_libweston = dependency('libweston-10')
+dep_libweston = dependency('libweston-13')
 dep_libinput_backend = cc.find_library('libinput-backend')
 dep_session_helper = cc.find_library('session-helper')
 dep_backlight = cc.find_library('backlight')

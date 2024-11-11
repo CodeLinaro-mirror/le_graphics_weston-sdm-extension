@@ -1,6 +1,6 @@
 /*
 *    This file provide a module to deal with deep sleep.
-*    Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+*    Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
 *    SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -13,7 +13,7 @@
 #include <errno.h>
 #include <libweston/zalloc.h>
 #include <libweston/libweston.h>
-#include "weston-shared/helpers.h"
+#include "shared/helpers.h"
 
 #ifndef EOK
 #define EOK 0

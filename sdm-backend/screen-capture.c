@@ -27,7 +27,7 @@
 *    IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
 *    Changes from Qualcomm Innovation Center are provided under the following license:
-*    Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+*    Copyright (c) 2022, 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 *    SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -121,7 +121,7 @@ screen_capture_create_screen(struct wl_client *client,
 	screen_cap->mirror_output_id = mirror_output->id;
 	screen_cap->width = width;
 	screen_cap->height = height;
-	b = (struct drm_backend *)screen_cap->compositor->backend;
+	b = (struct drm_backend *)screen_cap->compositor->primary_backend;
 	b->screen_cap = screen_cap;
 
 	screen_capture_send_created(resource);
@@ -151,13 +151,13 @@ wait_for_release(struct screen_capture_buffer *cap_buf)
 static void
 screen_capture_exit(struct screen_capture *screen_cap)
 {
-	struct drm_backend *b = (struct drm_backend *)screen_cap->compositor->backend;
+	struct drm_backend *b = (struct drm_backend *)screen_cap->compositor->primary_backend;
 	struct screen_capture_buffer *cap_buf, *next;
 
 	/* Clear those buffers which have not been consumed yet. */
 	wl_list_for_each_safe(cap_buf, next, &screen_cap->attached_buf_list, link) {
 		wl_list_remove(&cap_buf->link);
-		weston_buffer_reference(&cap_buf->buf_ref, NULL);
+		weston_buffer_reference(&cap_buf->buf_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 		free(cap_buf);
 	}
 
@@ -166,13 +166,13 @@ screen_capture_exit(struct screen_capture *screen_cap)
 			screen_cap->current != screen_cap->next) {
 		wait_for_release(screen_cap->current);
 		/* TODO: handle display WB2 composition */
-		weston_buffer_reference(&screen_cap->current->buf_ref, NULL);
+		weston_buffer_reference(&screen_cap->current->buf_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 		free(screen_cap->current);
 		screen_cap->current = NULL;
 	}
 	if (screen_cap->next) {
 		wait_for_release(screen_cap->next);
-		weston_buffer_reference(&screen_cap->next->buf_ref, NULL);
+		weston_buffer_reference(&screen_cap->next->buf_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 		free(screen_cap->next);
 		screen_cap->next = NULL;
 	}
@@ -249,7 +249,7 @@ screen_capture_attach(struct weston_compositor *compositor,
 		struct weston_buffer *buffer)
 {
 	struct gbm_buffer *gbm_buf = NULL;
-	struct drm_backend *b = (struct drm_backend *)compositor->backend;
+	struct drm_backend *b = (struct drm_backend *)compositor->primary_backend;
 	struct screen_capture *screen_cap = b->screen_cap;
 	struct screen_capture_buffer *cap_buf;
 
@@ -260,7 +260,7 @@ screen_capture_attach(struct weston_compositor *compositor,
 	/* Only support GBM buffer now. */
 	if(!buffer ||
 		wl_shm_buffer_get(buffer->resource) ||
-		linux_dmabuf_buffer_get(buffer->resource)) {
+		linux_dmabuf_buffer_get(compositor, buffer->resource)) {
 		return;
 	}
 
@@ -302,8 +302,6 @@ screen_capture_attach(struct weston_compositor *compositor,
 		wl_list_init(&capture_buf->link);
 		wl_list_insert(screen_cap->attached_buf_list.prev, &capture_buf->link);
 
-		/* Increase the buf refcnt here. */
-		weston_buffer_reference(&capture_buf->buf_ref, buffer);
 		SC_PROTOCOL_LOG(SC_LOG_DBG,"screen capture buffer is attached!\n");
 	}
 }
@@ -424,7 +422,7 @@ bind_screen_capture(struct wl_client *client,
 	struct weston_compositor *compositor = data;
 	struct wl_resource *resource;
 	struct screen_capture *screen_cap = NULL;
-	struct drm_backend *b = (struct drm_backend *)compositor->backend;
+	struct drm_backend *b = (struct drm_backend *)compositor->primary_backend;
 
 	SC_PROTOCOL_LOG(SC_LOG_DBG,"bind_screen_capture::Invoked\n");
 

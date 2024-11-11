@@ -27,7 +27,7 @@
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -233,7 +233,7 @@ private:
   uint32_t GetMappedFormatFromShm(uint32_t fmt);
   bool NeedConvertGbmFormat(struct weston_view *ev, uint32_t format);
   uint32_t ConvertToOpaqueGbmFormat(uint32_t format);
-  void ComputeSrcDstRect(struct drm_output *output, struct weston_view *ev,
+  void ComputeSrcDstRect(struct drm_output *output, struct weston_paint_node *node,
                          struct Rect *src_ret, struct Rect *dst_ret);
   int ComputeDirtyRegion(struct weston_view *ev, struct RectArray *dirty);
   uint16_t GetGlobalAlpha(struct weston_view *ev);

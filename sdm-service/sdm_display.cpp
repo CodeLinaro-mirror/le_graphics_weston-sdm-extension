@@ -52,7 +52,7 @@
  * SOFTWARE.
  *
  * Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include <assert.h>
@@ -97,6 +97,11 @@ namespace sdm {
 #define MAX_ALPHA 0xFFFF
 
 extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
+
+enum {
+  ORIGIN_TOP_LEFT, /* buffer content starts at (0,0) */
+  ORIGIN_BOTTOM_LEFT, /* buffer content starts at (0, height) */
+} buffer_origin;
 
 uint64_t SdmLayerManager::generate_layer_id()
 {
@@ -601,7 +606,7 @@ int SdmDisplay::PrepareFbLayerGeometry(struct drm_output *output,
   fb_layer->unaligned_width = output->base.current_mode->width;
   fb_layer->unaligned_height = output->base.current_mode->height;
 
-  fb_layer->format = GetMappedFormatFromGbm(output->format);
+  fb_layer->format = GetMappedFormatFromGbm(output->format->format);
   fb_layer->composition = SDM_COMPOSITION_FB_TARGET;
 
   fb_layer->src_rect.left = (float)0.0;
@@ -657,10 +662,12 @@ int SdmDisplay::PrepareFbLayerGeometry(struct drm_output *output,
 int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
                                            struct LayerGeometry **glayer,
                                            struct sdm_layer *sdm_layer) {
-  struct drm_backend *b = (struct drm_backend *)output->base.compositor->backend;
+  struct drm_backend *b = (struct drm_backend *)output->base.backend;
   struct LayerGeometry *layer;
   struct weston_view *ev = sdm_layer->view;
+  struct weston_paint_node *pnode = sdm_layer->pnode;
   struct weston_surface *es = ev->surface;
+  struct weston_compositor *ec = es->compositor;
   bool is_cursor = sdm_layer->is_cursor;
   uint32_t format = GBM_FORMAT_XBGR8888;
   struct linux_dmabuf_buffer *dmabuf;
@@ -683,9 +690,9 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
   layer->transform = SDM_TRANSFORM_NORMAL;
 
   if (!sdm_layer->is_skip) {
-    struct gbm_bo *bo;
+    struct gbm_bo *bo = NULL;
     //check whether the buffer resource is created by linux dma buf
-    if ((dmabuf = linux_dmabuf_buffer_get(es->buffer_ref.buffer->resource))) {
+    if ((dmabuf = linux_dmabuf_buffer_get(ec, es->buffer_ref.buffer->resource))) {
       struct dmabuf_attributes *attributes = &dmabuf->attributes;
       struct gbm_import_fd_modifier_data gbm_dmabuf = {
         .width   = attributes->width,
@@ -701,7 +708,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
        * Let the layer V-flipped if the weston_buffer is NOT y_inverted, to
        * make layer orientation the same between overlay and gpu composition path.
        */
-      if(!es->buffer_ref.buffer->y_inverted)
+      if (es->buffer_ref.buffer->buffer_origin == ORIGIN_BOTTOM_LEFT)
         layer->transform = SDM_TRANSFORM_FLIP_V;
     } else if ((gbm_buf = gbm_buffer_backend_c_interface.buffer_get(es->buffer_ref.buffer->resource))) {
       struct gbm_buf_info gbm_bufinfo = {
@@ -716,7 +723,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
                          GBM_BO_USE_SCANOUT);
       bo_fd = gbm_buf->fd;
 
-      if(!es->buffer_ref.buffer->y_inverted)
+      if (es->buffer_ref.buffer->buffer_origin == ORIGIN_BOTTOM_LEFT)
         layer->transform = SDM_TRANSFORM_FLIP_V;
     } else {
       /* Assume the unknown buffer resource as gbm buffer to get the fd value */
@@ -810,7 +817,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
   layer->format = GetMappedFormatFromGbm(format);
 
   /* Get src/dst rect */
-  ComputeSrcDstRect(output, ev, &layer->src_rect, &layer->dst_rect);
+  ComputeSrcDstRect(output, pnode, &layer->src_rect, &layer->dst_rect);
   /* Get visible rects */
   if (GetVisibleRegion(output, ev, &sdm_layer->overlap, &layer->visible_regions))
     return -1;
@@ -1359,76 +1366,39 @@ uint32_t SdmDisplay::ConvertToOpaqueGbmFormat(uint32_t format) {
   return ret;
 }
 
-void SdmDisplay::ComputeSrcDstRect(struct drm_output *output, struct weston_view *ev,
+void SdmDisplay::ComputeSrcDstRect(struct drm_output *output, struct weston_paint_node *node,
                                    struct Rect *src_ret, struct Rect *dst_ret) {
+  struct weston_view *ev = node->view;
   struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
-  pixman_region32_t src_rect, dest_rect;
-  pixman_box32_t *box, tbox;
+  pixman_region32_t dest_rect;
+  pixman_box32_t *box;
+  struct weston_coord corners[2];
   float sxf1, syf1, sxf2, syf2;
 
   /* dst rect */
   pixman_region32_init(&dest_rect);
   pixman_region32_intersect(&dest_rect, &ev->transform.boundingbox, &output->base.region);
 
-  pixman_region32_translate(&dest_rect, -output->base.x, -output->base.y);
+  weston_matrix_transform_region(&dest_rect, &output->base.matrix, &dest_rect);
   box = pixman_region32_extents(&dest_rect);
 
-  {
-    enum wl_output_transform buffer_transform1 = WL_OUTPUT_TRANSFORM_NORMAL;
-
-    switch(output->base.transform) {
-      case 0: buffer_transform1 = WL_OUTPUT_TRANSFORM_NORMAL; break;
-      case 1: buffer_transform1 = WL_OUTPUT_TRANSFORM_90; break;
-      case 2: buffer_transform1 = WL_OUTPUT_TRANSFORM_180; break;
-      case 3: buffer_transform1 = WL_OUTPUT_TRANSFORM_270; break;
-      case 4: buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED; break;
-      case 5: buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED_90; break;
-      case 6: buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED_180; break;
-      case 7: buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED_270; break;
-      default: 
-        DLOGE("Invalid buffer transform not supported: %d", output->base.transform);
-        pixman_region32_fini(&dest_rect);
-        return;
-   }
-
-  tbox = weston_transformed_rect(output->base.width,
-                                 output->base.height,
-                                 buffer_transform1,
-                                 output->base.current_scale,
-                                 *box);
-  }
-
-  dst_ret->left = (float)tbox.x1;
-  dst_ret->top = (float)tbox.y1;
-  dst_ret->right = (float)tbox.x2;
-  dst_ret->bottom = (float)tbox.y2;
+  dst_ret->left = (float)box->x1;
+  dst_ret->top = (float)box->y1;
+  dst_ret->right = (float)box->x2;
+  dst_ret->bottom = (float)box->y2;
   pixman_region32_fini(&dest_rect);
 
   /* src rect */
-  pixman_region32_init(&src_rect);
-  pixman_region32_intersect(&src_rect, &ev->transform.boundingbox,
-                            &output->base.region);
-  box = pixman_region32_extents(&src_rect);
-
-  switch(viewport->buffer.transform) {
-    case WL_OUTPUT_TRANSFORM_NORMAL: break;
-    case WL_OUTPUT_TRANSFORM_90: break;
-    case WL_OUTPUT_TRANSFORM_180: break;
-    case WL_OUTPUT_TRANSFORM_270: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED_90: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED_180: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED_270: break;
-    default: DLOGE("Invalid buffer transform not supported: %d", viewport->buffer.transform);
-      pixman_region32_fini(&src_rect);
-      return;
-  }
-
-  weston_view_from_global_float(ev, box->x1, box->y1, &sxf1, &syf1);
-  weston_surface_to_buffer_float(ev->surface, sxf1, syf1, &sxf1, &syf1);
-  weston_view_from_global_float(ev, box->x2, box->y2, &sxf2, &syf2);
-  weston_surface_to_buffer_float(ev->surface, sxf2, syf2, &sxf2, &syf2);
-  pixman_region32_fini(&src_rect);
+  corners[0] = weston_matrix_transform_coord(
+      &node->output_to_buffer_matrix,
+      weston_coord(box->x1, box->y1));
+  corners[1] = weston_matrix_transform_coord(
+      &node->output_to_buffer_matrix,
+      weston_coord(box->x2, box->y2));
+  sxf1 = corners[0].x;
+  syf1 = corners[0].y;
+  sxf2 = corners[1].x;
+  syf2 = corners[1].y;
 
   /* Buffer transforms may mean that x2 is to the left of x1, and/or that
    * y2 is above y1. */
@@ -1504,7 +1474,7 @@ int SdmDisplay::GetVisibleRegion(struct drm_output *output, struct weston_view *
   pixman_region32_copy(&temp, &ev->transform.boundingbox);
   pixman_region32_subtract(&temp, &temp, aboved_opaque);
   pixman_region32_intersect(&temp, &output->base.region, &temp);
-  pixman_region32_translate(&temp, -output->base.x, -output->base.y);
+  pixman_region32_translate(&temp, -output->base.pos.c.x, -output->base.pos.c.y);
 
   rectangles = pixman_region32_rectangles(&temp, &n);
   if (!n) {
