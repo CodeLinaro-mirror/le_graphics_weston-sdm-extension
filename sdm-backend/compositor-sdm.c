@@ -48,7 +48,7 @@
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -82,10 +82,10 @@
 #include <libweston/weston-log.h>
 #include <libweston/config-parser.h>
 
-#include "weston-shared/helpers.h"
-#include "weston-shared/timespec-util.h"
-#include "weston-shared/weston-egl-ext.h"
-#include "weston-shared/string-helpers.h"
+#include "shared/helpers.h"
+#include "shared/timespec-util.h"
+#include "shared/weston-egl-ext.h"
+#include "shared/string-helpers.h"
 #include <libweston-private/libbacklight.h>
 #include <libweston-private/gl-renderer.h>
 #include <libweston-private/linux-dmabuf.h>
@@ -101,6 +101,7 @@
 #include "pll-server-protocol.h"
 #include "presentation-time-server-protocol.h"
 #include "gbm-buffer-backend-server-protocol.h"
+#include "gbm-buffer-backend.h"
 
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
@@ -190,10 +191,20 @@ to_drm_output(struct weston_output *base)
 	return container_of(base, struct drm_output, base);
 }
 
+static void
+drm_destroy(struct weston_backend *backend);
+
 static inline struct drm_backend *
 to_drm_backend(struct weston_compositor *base)
 {
-	return container_of(base->backend, struct drm_backend, base);
+	struct weston_backend *backend;
+
+	wl_list_for_each(backend, &base->backend_list, link) {
+		if (backend->destroy == drm_destroy)
+			return container_of(backend, struct drm_backend, base);
+	}
+
+	return NULL;
 }
 
 static void
@@ -202,7 +213,7 @@ drm_fb_destroy_callback(struct gbm_bo *bo, void *data)
 	struct drm_fb *fb = data;
 	struct gbm_device *gbm = gbm_bo_get_device(bo);
 
-	weston_buffer_reference(&fb->buffer_ref, NULL);
+	weston_buffer_reference(&fb->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 
 	if (fb->ion_fd > -1) {
 		close(fb->ion_fd);
@@ -225,6 +236,7 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	fb = zalloc(sizeof *fb);
 	if (!fb)
 		return NULL;
+	fb->refcnt = 1;
 
 	memset(&create_arg, 0, sizeof create_arg);
 	create_arg.bpp = 32;
@@ -235,6 +247,7 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	if (ret)
 		goto err_fb;
 
+	fb->type = BUFFER_PIXMAN_DUMB;
 	fb->handle = create_arg.handle;
 	fb->stride = create_arg.pitch;
 	fb->size = create_arg.size;
@@ -278,6 +291,14 @@ err_fb:
 	return NULL;
 }
 
+/* TODO: Check if necessary for sdm-backend */
+struct drm_fb *
+drm_fb_ref(struct drm_fb *fb)
+{
+	fb->refcnt++;
+	return fb;
+}
+
 static void
 drm_fb_destroy_dumb(struct drm_fb *fb)
 {
@@ -289,7 +310,7 @@ drm_fb_destroy_dumb(struct drm_fb *fb)
 	if (fb->fb_id)
 		drmModeRmFB(fb->fd, fb->fb_id);
 
-	weston_buffer_reference(&fb->buffer_ref, NULL);
+	weston_buffer_reference(&fb->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 
 	munmap(fb->map, fb->size);
 
@@ -326,14 +347,24 @@ drm_fb_get_from_bo(struct drm_output *output, struct gbm_bo *bo,
 	return fb;
 }
 
-static void
-drm_fb_set_buffer(struct drm_fb *fb, struct weston_buffer *buffer)
+void
+drm_fb_unref(struct drm_fb *fb)
 {
-	assert(fb->buffer_ref.buffer == NULL);
+	if (!fb)
+		return;
 
-	fb->is_client_buffer = 1;
+	assert(fb->refcnt > 0);
+	if (--fb->refcnt > 0)
+		return;
 
-	weston_buffer_reference(&fb->buffer_ref, buffer);
+	switch (fb->type) {
+	case BUFFER_PIXMAN_DUMB:
+		drm_fb_destroy_dumb(fb);
+		break;
+	default:
+		assert(NULL);
+		break;
+	}
 }
 
 static void
@@ -357,12 +388,11 @@ drm_output_release_fb(struct drm_output *output, struct drm_fb *fb)
 static void
 drm_output_render_gl(struct drm_output *output, pixman_region32_t *damage)
 {
-	struct drm_backend *b =
-		(struct drm_backend *)output->base.compositor->backend;
+	struct drm_backend *b = to_drm_backend(output->base.compositor);
 	struct gbm_bo *bo;
 
 	output->base.compositor->renderer->repaint_output(&output->base,
-							  damage);
+							  damage, NULL);
 
 	bo = gbm_surface_lock_front_buffer(output->surface);
 	if (!bo) {
@@ -382,42 +412,25 @@ static void
 drm_output_render_pixman(struct drm_output *output, pixman_region32_t *damage)
 {
 	struct weston_compositor *ec = output->base.compositor;
-	pixman_region32_t total_damage, previous_damage;
-
-	pixman_region32_init(&total_damage);
-	pixman_region32_init(&previous_damage);
-
-	pixman_region32_copy(&previous_damage, damage);
-
-	pixman_region32_union(&total_damage, damage, &output->previous_damage);
-	pixman_region32_copy(&output->previous_damage, &previous_damage);
 
 	output->current_image ^= 1;
-
 	output->next = output->dumb[output->current_image];
-	pixman_renderer_output_set_buffer(&output->base,
-			output->image[output->current_image]);
 
-	ec->renderer->repaint_output(&output->base, &total_damage);
-
-	pixman_region32_fini(&total_damage);
-	pixman_region32_fini(&previous_damage);
+	ec->renderer->repaint_output(&output->base, damage,
+					output->renderbuffer[output->current_image]);
 }
 
 static void
 drm_output_render(struct drm_output *output, pixman_region32_t *damage)
 {
 	struct weston_compositor *c = output->base.compositor;
-	struct drm_backend *b = (struct drm_backend *)c->backend;
+	struct drm_backend *b = to_drm_backend(c);
 
 	if (b->use_pixman)
 		drm_output_render_pixman(output, damage);
 	else {
 		drm_output_render_gl(output, damage);
 	}
-
-	pixman_region32_subtract(&c->primary_plane.damage,
-			&c->primary_plane.damage, damage);
 }
 
 
@@ -451,7 +464,7 @@ static void destroy_sdm_layer(struct sdm_layer *layer);
 static void
 destroy_early_layer(struct early_layer *layer)
 {
-	weston_buffer_reference(&layer->buffer_ref, NULL);
+	weston_buffer_reference(&layer->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 	wl_list_remove(&layer->link);
 	if (layer->bo) {
 		gbm_bo_destroy(layer->bo);
@@ -462,9 +475,10 @@ destroy_early_layer(struct early_layer *layer)
 }
 
 static struct early_layer *
-create_early_layer(struct weston_view *ev)
+create_early_layer(struct weston_paint_node *pnode)
 {
 	struct early_layer *layer = NULL;
+	struct weston_view *ev = pnode->view;
 
 	layer = zalloc(sizeof(*layer));
 	if (layer == NULL) {
@@ -473,6 +487,7 @@ create_early_layer(struct weston_view *ev)
 	}
 
 	layer->view = ev;
+	layer->pnode = pnode;
 	return layer;
 }
 
@@ -744,8 +759,7 @@ drm_output_repaint_early(struct weston_output *output_base)
 	struct drm_output *output = (struct drm_output *) output_base;
 	struct early_layer *early_layer, *next_early_layer;
 	static bool first_commit = true;
-	struct drm_backend *backend =
-		(struct drm_backend *)output_base->compositor->backend;
+	struct drm_backend *backend = to_drm_backend(output_base->compositor);
 	int ret = -1;
 
 	if (output->prev_layer_none_commit && output->layer_none_commit)
@@ -793,8 +807,7 @@ output_repaint(struct weston_output *output_base,
 		pixman_region32_t *damage, bool is_virtual_output)
 {
 	struct drm_output *output = (struct drm_output *) output_base;
-	struct drm_backend *backend =
-			(struct drm_backend *)output->base.compositor->backend;
+	struct drm_backend *backend = to_drm_backend(output_base->compositor);
 	struct drm_mode *mode;
 	static bool commit = false;
 	int ret = -1;
@@ -869,15 +882,15 @@ do_screen_capture(struct screen_capture *screen_cap,
 	 * Decrease the attached refcnt after increasing composition refcnt to
 	 * avoid releasing buffer in advance
 	 */
-	weston_buffer_reference(&screen_cap->buf_ref, cap_buf->buffer);
-	weston_buffer_reference(&cap_buf->buf_ref, NULL);
+	weston_buffer_reference(&screen_cap->buf_ref, cap_buf->buffer, BUFFER_MAY_BE_ACCESSED);
+	weston_buffer_reference(&cap_buf->buf_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 
 	if (screen_cap->fallback_gpu) {
 		screen_cap->compositor->renderer->capture_screen(screen_cap->mirror_output,
 						cap_buf->buffer, damage);
 
 		/* Release the buffer once GPU composition is completed */
-		weston_buffer_reference(&screen_cap->buf_ref, NULL);
+		weston_buffer_reference(&screen_cap->buf_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 
 		free(cap_buf);
 		screen_cap->next = NULL;
@@ -891,8 +904,7 @@ static int
 drm_output_repaint(struct weston_output *output_base,
 		pixman_region32_t *damage)
 {
-	struct drm_backend *backend =
-			(struct drm_backend *)output_base->compositor->backend;
+	struct drm_backend *backend = to_drm_backend(output_base->compositor);
 	struct screen_capture *screen_cap = backend->screen_cap;
 
 	/* Backend is not full ready, do early repaint. */
@@ -912,8 +924,7 @@ static int
 drm_output_start_repaint_loop(struct weston_output *output_base)
 {
 	struct drm_output *output = (struct drm_output *) output_base;
-	struct drm_backend *backend = (struct drm_backend *)
-		output_base->compositor->backend;
+	struct drm_backend *backend = to_drm_backend(output_base->compositor);
 	uint32_t fb_id;
 	struct timespec ts, tnow;
 	struct timespec vbl2now;
@@ -957,12 +968,12 @@ finish_frame:
  * output repaint functions until the repaint is flushed or cancelled.
  */
 static void *
-drm_repaint_begin(struct weston_compositor *compositor)
+drm_repaint_begin(struct weston_backend *backend)
 {
-	struct drm_backend *b = to_drm_backend(compositor);
+	struct drm_backend *b = container_of(backend, struct drm_backend, base);
 
 	if (weston_log_scope_is_enabled(b->debug)) {
-		char *dbg = weston_compositor_print_scene_graph(compositor);
+		char *dbg = weston_compositor_print_scene_graph(b->compositor);
 		drm_debug(b, "[repaint] Beginning repaint\n");
 		drm_debug(b, "%s", dbg);
 		free(dbg);
@@ -981,9 +992,9 @@ drm_repaint_begin(struct weston_compositor *compositor)
  * state will be freed.
  */
 static int
-drm_repaint_flush(struct weston_compositor *compositor, void *repaint_data)
+drm_repaint_flush(struct weston_backend *backend)
 {
-	struct drm_backend *b = to_drm_backend(compositor);
+	struct drm_backend *b = container_of(backend, struct drm_backend, base);
 
 	drm_debug(b, "[repaint] flushed\n");
 
@@ -997,9 +1008,9 @@ drm_repaint_flush(struct weston_compositor *compositor, void *repaint_data)
  * held across the repaint cycle should be discarded.
  */
 static void
-drm_repaint_cancel(struct weston_compositor *compositor, void *repaint_data)
+drm_repaint_cancel(struct weston_backend *backend)
 {
-	struct drm_backend *b = to_drm_backend(compositor);
+	struct drm_backend *b = container_of(backend, struct drm_backend, base);
 
 	drm_debug(b, "[repaint] cancel\n");
 }
@@ -1093,7 +1104,7 @@ static void
 destroy_sdm_layer(struct sdm_layer *layer)
 {
 	pixman_region32_fini(&layer->overlap);
-	weston_buffer_reference(&layer->buffer_ref, NULL);
+	weston_buffer_reference(&layer->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
 	wl_list_remove(&layer->link);
 	if (layer->bo) {
 		gbm_bo_destroy(layer->bo);
@@ -1102,10 +1113,11 @@ destroy_sdm_layer(struct sdm_layer *layer)
 }
 
 static struct sdm_layer *
-create_sdm_layer(struct drm_output *output, struct weston_view *ev, pixman_region32_t *overlap,
+create_sdm_layer(struct drm_output *output, struct weston_paint_node *pnode, pixman_region32_t *overlap,
 		 bool is_cursor, bool is_skip)
 {
 	struct sdm_layer *layer;
+	struct weston_view *ev = pnode->view;
 
 	layer = zalloc(sizeof(*layer));
 	if (layer == NULL) {
@@ -1113,12 +1125,13 @@ create_sdm_layer(struct drm_output *output, struct weston_view *ev, pixman_regio
 	}
 
 	layer->view = ev;
+	layer->pnode = pnode;
 	layer->is_cursor = is_cursor;
 	layer->is_skip = is_skip;
 
 	pixman_region32_init(&layer->overlap);
 	pixman_region32_copy(&layer->overlap, overlap);
-	weston_buffer_reference(&layer->buffer_ref, ev->surface->buffer_ref.buffer);
+	weston_buffer_reference(&layer->buffer_ref, ev->surface->buffer_ref.buffer, BUFFER_MAY_BE_ACCESSED);
 
 	return layer;
 }
@@ -1141,7 +1154,8 @@ is_skip_view(struct weston_view *ev, struct drm_output *output)
 	if (ev->output_mask != (1u << output->base.id))
 		skip = true;
 
-	if (!es->buffer_ref.buffer) {
+	/* skip animation fade-out view */
+	if (!weston_view_has_valid_buffer(ev)) {
 		skip = true;
 	}  else if (wl_shm_buffer_get(es->buffer_ref.buffer->resource)) {
 		skip = true;
@@ -1171,14 +1185,15 @@ is_completely_covered_view(struct weston_view *ev, pixman_region32_t *above_opaq
 static void
 drm_assign_planes_early(struct weston_output *output_base)
 {
-	struct drm_output *output = (struct drm_output *)output_base;
-	struct weston_view *ev, *next;
+	struct drm_output *output = to_drm_output(output_base);
+	struct weston_paint_node *pnode, *next;
 	struct early_layer *early_layer;
 
 	assert(wl_list_empty(&output->early_layer_list));
 	output->view_count = 0;
 
-	wl_list_for_each_safe(ev, next, &output_base->compositor->view_list, link) {
+	wl_list_for_each_safe(pnode, next, &output->base.paint_node_z_order_list, z_order_link) {
+		struct weston_view *ev = pnode->view;
 		bool is_skip = false;
 		struct weston_surface *es = ev->surface;
 
@@ -1200,9 +1215,8 @@ drm_assign_planes_early(struct weston_output *output_base)
 			struct gbm_buffer *gbm_buf =
 					gbm_buffer_backend_c_interface.buffer_get(es->buffer_ref.buffer->resource);
 
-			if(gbm_buf &&
-						gbm_buf->flags & GBM_BUFFER_PARAMS_FLAGS_EARLY_DISPLAY) {
-				early_layer = create_early_layer(ev);
+			if (gbm_buf && gbm_buf->flags & GBM_BUFFER_PARAMS_FLAGS_EARLY_DISPLAY) {
+				early_layer = create_early_layer(pnode);
 				if (!early_layer)
 					continue;
 				wl_list_insert(output->early_layer_list.prev, &early_layer->link);
@@ -1244,10 +1258,10 @@ prepare_virtual_output(struct drm_output *virtual_output, struct weston_output *
 static int
 assign_planes(struct weston_output *output_base, bool is_virtual_output)
 {
-	struct drm_backend *b =
-			(struct drm_backend *)output_base->compositor->backend;
+	struct drm_backend *b = to_drm_backend(output_base->compositor);
 	struct drm_output *output = (struct drm_output *)output_base;
-	struct weston_view *ev, *next;
+	struct weston_view *ev;
+	struct weston_paint_node *pnode, *next;
 	pixman_region32_t above_opaque, surface_opaque;
 	struct weston_plane *primary, *next_plane;
 	struct sdm_layer *sdm_layer, *next_sdm_layer;
@@ -1270,7 +1284,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 	 * as we do for flipping full screen surfaces.
 	 */
 	pixman_region32_init(&above_opaque);
-	primary = &output_base->compositor->primary_plane;
+	primary = &output_base->primary_plane;
 
 	/* 1. Compute how many views which can be handled by SDM module */
 	/* Some views may neither be composited by GPU nor display engine directly,
@@ -1278,7 +1292,8 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 	 * to SDM because format check will fail which may cause SDM can't filter
 	 * correct strategy result. If so, assign those views directly to primary plane.
 	 */
-	wl_list_for_each_safe(ev, next, &output_base->compositor->view_list, link) {
+	wl_list_for_each_safe(pnode, next, &output->base.paint_node_z_order_list, z_order_link) {
+		struct weston_view *ev = pnode->view;
 		bool is_cursor = false;
 		bool is_skip = false;
 		struct weston_surface *es = ev->surface;
@@ -1322,24 +1337,23 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 		if (!(ev->output_mask & (1u << output->base.id))) {
 			drm_debug(b, "\t\t\t\t[view] ignoring view %p (not on our output)\n", ev);
 			if (es->keep_buffer == false)
-				weston_view_move_to_plane(ev, primary);
+				weston_paint_node_move_to_plane(pnode, primary);
 			continue;
 		}
 
-		pixman_region32_copy(&ev->clip, &above_opaque);
 		if (is_completely_covered_view(ev, &above_opaque)) {
 			drm_debug(b, "\t\t\t\t[view] ignoring view %p (occluded on our output)\n", ev);
 
 			if (es->keep_buffer == false)
-				weston_view_move_to_plane(ev, primary);
+				weston_paint_node_move_to_plane(pnode, primary);
 			else
-				ev->plane = NULL;
+				pnode->plane = NULL;
 			continue;
 		}
 
 		is_skip = is_skip_view(ev, output);
 
-		sdm_layer = create_sdm_layer(output, ev, &above_opaque, is_cursor, is_skip);
+		sdm_layer = create_sdm_layer(output, pnode, &above_opaque, is_cursor, is_skip);
 		if (sdm_layer == NULL) {
 			weston_log("Create sdm layer failed.\n");
 			goto err_out;
@@ -1374,7 +1388,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 		if (sdm_layer->composition_type == SDM_COMPOSITION_GPU) {
 			if (!is_virtual_output) {
 				drm_debug(b, "\t\t\t\t[view] view %p will be placed on the renderer[primary plane]\n", ev);
-				weston_view_move_to_plane(ev, next_plane);
+				weston_paint_node_move_to_plane(sdm_layer->pnode, next_plane);
 				ev->psf_flags = 0;
 			}
 
@@ -1386,7 +1400,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 				/* Composed by Display Hardware directly */
 				ev->psf_flags = WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
 				/* Set the view's plane back to NULL so that it is not composed by GPU */
-				sdm_layer->view->plane = NULL;
+				sdm_layer->pnode->plane = NULL;
 			}
 		}
 	}
@@ -1411,8 +1425,7 @@ err_out:
 static void
 drm_assign_planes(struct weston_output *output_base)
 {
-	struct drm_backend *b =
-		(struct drm_backend *)output_base->compositor->backend;
+	struct drm_backend *b = to_drm_backend(output_base->compositor);
 	struct screen_capture *screen_cap = b->screen_cap;
 	bool has_GPU_composition = false;
 
@@ -1493,14 +1506,23 @@ static void
 drm_output_destroy(struct weston_output *output_base)
 {
 	struct drm_output *output = (struct drm_output *) output_base;
-	struct drm_backend *b =
-		(struct drm_backend *)output->base.compositor->backend;
+	struct drm_backend *b = to_drm_backend(output_base->compositor);
 	struct sdm_layer *sdm_layer, *next_sdm_layer;
 
 	if (output->frame_pending) {
-		output->destroy_pending = 1;
-		weston_log("destroy output while page flip pending\n");
-		return;
+		if (!output_base->compositor->shutting_down) {
+			/* We are not shutting down, so we can wait for flip
+			 * completion. */
+			output->destroy_pending = 1;
+			weston_log("delaying output destruction because of a " \
+				   "pending flip, wait until it completes\n");
+			return;
+		} else {
+			weston_log("destroying output %s (id %u) with a pending " \
+				   "flip, but as we are shutting down we can't " \
+				   "wait to destroy it when the flip completes... " \
+				   "destroying it now\n", output_base->name, output_base->id);
+		}
 	}
 
 	if (output->finish_frame_timer)
@@ -1565,7 +1587,7 @@ drm_output_switch_mode(struct weston_output *output_base, struct weston_mode *mo
 		return -1;
 	}
 
-	b = (struct drm_backend *)output_base->compositor->backend;
+	b = to_drm_backend(output_base->compositor);
 	output = (struct drm_output *)output_base;
 	drm_mode  = choose_mode (output, mode);
 
@@ -1620,12 +1642,7 @@ init_drm_early(struct drm_backend *b)
 
 	weston_log("init drm: drm fd = %d\n", b->drm.fd);
 
-	if (weston_compositor_set_presentation_clock(b->compositor,
-				CLOCK_MONOTONIC) < 0) {
-		weston_log("Error: failed to set presentation clock %d.\n",
-				CLOCK_MONOTONIC);
-		return -1;
-	}
+	b->base.supported_presentation_clocks = 1 << CLOCK_MONOTONIC;
 
 	/* use render node to create gbm device */
 	b->render_fd = drmOpenWithType("msm_drm", 0, DRM_NODE_RENDER);
@@ -1660,7 +1677,7 @@ create_gbm_device(int fd)
 	struct gbm_device *gbm;
 
 	gl_renderer = weston_load_module("gl-renderer.so",
-					 "gl_renderer_interface");
+					 "gl_renderer_interface", LIBWESTON_MODULEDIR);
 	if (!gl_renderer)
 		return NULL;
 
@@ -1686,41 +1703,34 @@ create_gbm_device(int fd)
  * This works around https://bugs.freedesktop.org/show_bug.cgi?id=89689
  * but it's entirely possible we'll see this again on other implementations.
  */
-static int
-fallback_format_for(uint32_t format)
+static const struct pixel_format_info *
+fallback_format_for(const struct pixel_format_info *format)
 {
-	switch (format) {
-	case GBM_FORMAT_ARGB8888:
-		return GBM_FORMAT_ABGR8888;
-	case GBM_FORMAT_XRGB8888:
-		return GBM_FORMAT_XBGR8888;
-	default:
-		return 0;
-	}
+	return pixel_format_get_info_by_opaque_substitute(format->format);
 }
 
 static int
 drm_backend_create_gl_renderer(struct drm_backend *b)
 {
-	EGLint format[2] = {
+	const struct pixel_format_info *format[3] = {
 		b->format,
 		fallback_format_for(b->format),
+		NULL,
 	};
 	struct gl_renderer_display_options options = {
 		.egl_platform = EGL_PLATFORM_GBM_KHR,
 		.egl_native_display = b->gbm,
 		.egl_surface_type = EGL_WINDOW_BIT,
-		.drm_formats = format,
-		.drm_formats_count = 1,
+		.formats = format,
+		.formats_count = 2,
 	};
 
 	if (format[1])
-		options.drm_formats_count = 2;
-	if (gl_renderer->display_create(b->compositor, &options) < 0) {
-		return -1;
-	}
+		options.formats_count = 3;
 
-	return 0;
+	return weston_compositor_init_renderer(b->compositor,
+					WESTON_RENDERER_GL,
+					&options.base);
 }
 
 /**
@@ -1921,7 +1931,7 @@ drm_set_ppm(struct weston_output *output_base, int32_t ppm)
 static int
 drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 {
-	EGLint format[2] = {
+	const struct pixel_format_info *format[2] = {
 		output->format,
 		fallback_format_for(output->format),
 	};
@@ -1938,7 +1948,7 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 	output->surface = gbm_surface_create(b->gbm,
 								output->base.current_mode->width,
 								output->base.current_mode->height,
-								format[0],
+								output->format->format,
 								flags);
 
 	if (!output->surface) {
@@ -1958,12 +1968,18 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 	struct gl_renderer_output_options options = {
 		.window_for_legacy = (EGLNativeWindowType) output->surface,
 		.window_for_platform = output->surface,
-		.drm_formats = format,
-		.drm_formats_count = 1,
+		.formats = format,
+		.formats_count = 1,
+		.area.x = 0,
+		.area.y = 0,
+		.area.width = output->base.current_mode->width,
+		.area.height = output->base.current_mode->height,
+		.fb_size.width = output->base.current_mode->width,
+		.fb_size.height = output->base.current_mode->height,
 	};
 
 	if (format[1])
-		options.drm_formats_count = 2;
+		options.formats_count = 2;
 	if (gl_renderer->output_window_create(&output->base, &options) < 0) {
 		weston_log("failed to create gl renderer output state\n");
 		gbm_surface_destroy(output->surface);
@@ -1976,48 +1992,65 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 static int
 drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
 {
+	struct weston_renderer *renderer = output->base.compositor->renderer;
+	const struct pixman_renderer_interface *pixman = renderer->pixman;
 	int w = output->base.current_mode->width;
 	int h = output->base.current_mode->height;
 	unsigned int i;
 	const struct pixman_renderer_output_options options = {
 		.use_shadow = b->use_pixman_shadow,
+		.fb_size = { .width = w, .height = h },
+		.format = output->format
 	};
-	/* FIXME error checking */
 
+	assert(options.format);
+
+	if (!options.format->pixman_format) {
+		weston_log("Unsupported pixel format %s\n",
+			   options.format->drm_format_name);
+		return -1;
+	}
+
+	if (pixman->output_create(&output->base, &options))
+		goto err;
+
+	/* FIXME error checking */
 	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
 		output->dumb[i] = drm_fb_create_dumb(b, w, h);
 		if (!output->dumb[i])
 			goto err;
 
-		output->image[i] =
-			pixman_image_create_bits(PIXMAN_x8r8g8b8, w, h,
-					output->dumb[i]->map,
-					output->dumb[i]->stride);
-		if (!output->image[i])
+		output->renderbuffer[i] =
+			pixman->create_image_from_ptr(&output->base,
+						      options.format, w, h,
+						      output->dumb[i]->map,
+						      output->dumb[i]->stride);
+		if (!output->renderbuffer[i])
 			goto err;
-	}
 
-	if (pixman_renderer_output_create(&output->base, &options) < 0)
-		goto err;
+		pixman_region32_init_rect(&output->renderbuffer[i]->damage,
+					output->base.pos.c.x,
+					output->base.pos.c.y,
+					output->base.width,
+					output->base.height);
+	}
 
 	weston_log("DRM: output %s %s shadow framebuffer.\n", output->base.name,
 		   b->use_pixman_shadow ? "uses" : "does not use");
-
-	pixman_region32_init_rect(&output->previous_damage,
-			output->base.x, output->base.y, output->base.width, output->base.height);
 
 	return 0;
 
 err:
 	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
 		if (output->dumb[i])
-			drm_fb_destroy_dumb(output->dumb[i]);
-		if (output->image[i])
-			pixman_image_unref(output->image[i]);
+			drm_fb_unref(output->dumb[i]);
+		if (output->renderbuffer[i])
+			weston_renderbuffer_unref(output->renderbuffer[i]);
 
 		output->dumb[i] = NULL;
-		output->image[i] = NULL;
+		output->renderbuffer[i] = NULL;
 	}
+	pixman->output_destroy(&output->base);
 
 	return -1;
 }
@@ -2025,17 +2058,17 @@ err:
 static void
 drm_output_fini_pixman(struct drm_output *output)
 {
+	struct weston_renderer *renderer = output->base.compositor->renderer;
 	unsigned int i;
 
-	pixman_renderer_output_destroy(&output->base);
-	pixman_region32_fini(&output->previous_damage);
-
 	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
-		drm_fb_destroy_dumb(output->dumb[i]);
-		pixman_image_unref(output->image[i]);
+		weston_renderbuffer_unref(output->renderbuffer[i]);
+		drm_fb_unref(output->dumb[i]);
 		output->dumb[i] = NULL;
-		output->image[i] = NULL;
+		output->renderbuffer[i] = NULL;
 	}
+
+	renderer->pixman->output_destroy(&output->base);
 }
 
 static void
@@ -2150,9 +2183,8 @@ setup_output_seat_constraint(struct drm_backend *b,
 
 		pointer = weston_seat_get_pointer(&seat->base);
 		if (pointer)
-			weston_pointer_clamp(pointer,
-					&pointer->x,
-					&pointer->y);
+			pointer->pos = weston_pointer_clamp(pointer,
+					pointer->pos);
 	}
 }
 
@@ -2312,24 +2344,24 @@ drm_output_detach_head(struct weston_output *output_base,
 }
 
 static int
-parse_gbm_format(const char *s, uint32_t default_value, uint32_t *gbm_format)
+parse_gbm_format(const char *s, const struct pixel_format_info *default_format,
+		 const struct pixel_format_info **format)
 {
-	int ret = 0;
+	if (s == NULL) {
+		*format = default_format;
 
-	if (s == NULL)
-		*gbm_format = default_value;
-	else if (strcmp(s, "xrgb8888") == 0)
-		*gbm_format = GBM_FORMAT_XRGB8888;
-	else if (strcmp(s, "rgb565") == 0)
-		*gbm_format = GBM_FORMAT_RGB565;
-	else if (strcmp(s, "xrgb2101010") == 0)
-		*gbm_format = GBM_FORMAT_XRGB2101010;
-	else {
-		weston_log("fatal: unrecognized pixel format: %s\n", s);
-		ret = -1;
+		return 0;
 	}
 
-	return ret;
+	/* GBM formats and DRM formats are identical. */
+	*format = pixel_format_get_info_by_drm_name(s);
+	if (!*format) {
+		weston_log("fatal: unrecognized pixel format: %s\n", s);
+
+		return -1;
+	}
+
+	return 0;
 }
 
 static int
@@ -2395,6 +2427,19 @@ drm_output_set_seat(struct weston_output *base,
 	setup_output_seat_constraint(b, &output->base,
 			seat ? seat : "");
 }
+
+static void
+drm_output_set_max_bpc(struct weston_output *base, unsigned max_bpc)
+{
+}
+
+static int
+drm_output_set_content_type(struct weston_output *base,
+			    const char *content_type)
+{
+	return 0;
+}
+
 static void
 drm_head_log_info(struct drm_head *head, const char *msg)
 {
@@ -2448,6 +2493,8 @@ drm_head_create(struct drm_backend *backend, uint32_t display_id,
 	weston_head_set_monitor_strings(&head->base, "unknown",
 			name, NULL);
 	free(name);
+
+	head->base.backend = &backend->base;
 
 	uint32_t mmWidth  = (display_config->x_pixels/display_config->x_dpi)*25.4;
 	uint32_t mmHeight = (display_config->y_pixels/display_config->y_dpi)*25.4;
@@ -2681,16 +2728,16 @@ drm_output_disable(struct weston_output *base)
  * @returns The output, or NULL on failure.
  */
 static struct weston_output *
-drm_output_create(struct weston_compositor *compositor, const char *name)
+drm_output_create(struct weston_backend *backend, const char *name)
 {
-	struct drm_backend *b = to_drm_backend(compositor);
+	struct drm_backend *b = container_of(backend, struct drm_backend, base);
 	struct drm_output *output;
 
 	output = zalloc(sizeof *output);
 	if (output == NULL)
 		return NULL;
 
-	weston_output_init(&output->base, compositor, name);
+	weston_output_init(&output->base, b->compositor, name);
 
 	output->base.enable = drm_output_enable;
 	output->base.destroy = drm_output_destroy;
@@ -2702,7 +2749,7 @@ drm_output_create(struct weston_compositor *compositor, const char *name)
 	output->disable_pending = 0;
 	output->frame_pending = 0;
 
-	struct wl_event_loop *loop = wl_display_get_event_loop(compositor->wl_display);
+	struct wl_event_loop *loop = wl_display_get_event_loop(b->compositor->wl_display);
 	output->finish_frame_timer =
 			wl_event_loop_add_timer(loop, finish_frame_handler, output);
 
@@ -2819,7 +2866,7 @@ update_outputs(struct drm_backend *b, struct udev_device *drm_device)
 
 	/* XXX: not yet needed, we die with 0 outputs */
 	if (!wl_list_empty(&b->compositor->output_list))
-		x = last->x + last->width;
+		x = last->pos.c.x + last->width;
 	else
 		x = 0;
 	y = 0;
@@ -2955,9 +3002,10 @@ udev_drm_event(int fd, uint32_t mask, void *data)
 }
 
 static void
-drm_destroy(struct weston_compositor *ec)
+drm_destroy(struct weston_backend *backend)
 {
-	struct drm_backend *b = (struct drm_backend *) ec->backend;
+	struct drm_backend *b = container_of(backend, struct drm_backend, base);
+	struct weston_compositor *ec = b->compositor;
 	struct weston_head *base, *next;
 
 	udev_input_destroy(&b->input);
@@ -2965,7 +3013,6 @@ drm_destroy(struct weston_compositor *ec)
 	wl_event_source_remove(b->udev_drm_source);
 	weston_log_scope_destroy(b->debug);
 	b->debug = NULL;
-	weston_compositor_shutdown(ec);
 	//TODO(user): Need to destroy the display device here
 	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link) {
 		drm_display_destroy(to_drm_head(base));
@@ -3015,7 +3062,7 @@ drm_backend_set_modes(struct drm_backend *backend)
 			weston_log(
 				"failed to set mode %dx%d for output at %d,%d: %m\n",
 				drm_mode->base.width, drm_mode->base.height,
-				output->base.x, output->base.y);
+				output->base.pos.c.x, output->base.pos.c.y);
 		}
 	}
 }
@@ -3024,7 +3071,7 @@ static void
 session_notify(struct wl_listener *listener, void *data)
 {
 	struct weston_compositor *compositor = data;
-	struct drm_backend *b = (struct drm_backend *)compositor->backend;
+	struct drm_backend *b = to_drm_backend(compositor);
 	struct drm_sprite *sprite;
 	struct drm_output *output;
 
@@ -3091,7 +3138,7 @@ recorder_frame_notify(struct wl_listener *listener, void *data)
 
 	output = container_of(listener, struct drm_output,
 						recorder_frame_listener);
-	b = (struct drm_backend *)output->base.compositor->backend;
+	b = to_drm_backend(output->base.compositor);
 
 	if (!output->recorder)
 		return;
@@ -3203,7 +3250,7 @@ switch_to_gl_renderer(struct drm_backend *b)
 	}
 
 	wl_list_for_each(output, &b->compositor->output_list, base.link)
-		pixman_renderer_output_destroy(&output->base);
+		b->compositor->renderer->pixman->output_destroy(&output->base);
 
 	b->compositor->renderer->destroy(b->compositor);
 
@@ -3246,6 +3293,8 @@ static const struct weston_drm_output_api api = {
 	drm_output_set_mode,
 	drm_output_set_gbm_format,
 	drm_output_set_seat,
+	drm_output_set_max_bpc,
+	drm_output_set_content_type,
 };
 
 static int init_sdm(void) {
@@ -3254,7 +3303,7 @@ static int init_sdm(void) {
 	* to reduce loading time of drm-backend.so
 	*/
 	sdm_service = weston_load_module("sdm-service.so",
-							"sdm_service_interface");
+							"sdm_service_interface", LIBWESTON_MODULEDIR);
 	if (!sdm_service)
 		return -1;
 
@@ -3280,8 +3329,7 @@ struct udev_para {
 static int bg_init_input(void *arg)
 {
 	struct udev_para *para = (struct udev_para*)arg;
-	struct drm_backend *b =
-		(struct drm_backend *)para->compositor->backend;
+	struct drm_backend *b = to_drm_backend(para->compositor);
 
 	if (udev_input_init(para->input,
 			para->compositor, para->udev, para->seat_id, para->configure_device)) {
@@ -3352,7 +3400,7 @@ static void *full_init_main(void *arg) {
 		goto err_sdm_core;
 
 	gl_renderer = weston_load_module("gl-renderer.so",
-							"gl_renderer_interface");
+							"gl_renderer_interface", LIBWESTON_MODULEDIR);
 	if (!gl_renderer)
 		goto err_sdm_core;
 
@@ -3498,7 +3546,7 @@ drm_backend_create(struct weston_compositor *compositor,
 		return NULL;
 
 	b->compositor = compositor;
-	b->use_pixman = config->use_pixman;
+	b->use_pixman = (config->renderer == WESTON_RENDERER_PIXMAN) ? true : false;
 	b->use_pixman_shadow = config->use_pixman_shadow;
 
 	b->debug = weston_compositor_add_log_scope(compositor,
@@ -3506,22 +3554,23 @@ drm_backend_create(struct weston_compositor *compositor,
 						   "Debug messages from DRM/KMS backend\n",
 						    NULL, NULL, NULL);
 
-	compositor->backend = &b->base;
+	wl_list_insert(&compositor->backend_list, &b->base.link);
 
 	/* Framebuffer should be in ARGB format to support mixed mode composition
 	 * e.g., if framebuffer is sandwiched between application views where in
 	 * these application views are composed by overlays/SDE.
 	 */
-	if (parse_gbm_format(config->gbm_format, GBM_FORMAT_ABGR8888, &b->format) < 0)
-		goto err_compositor;
+	if (parse_gbm_format(config->gbm_format,
+				pixel_format_get_info(GBM_FORMAT_ABGR8888),
+				&b->format) < 0)
+		goto err_base;
 
 	/* Check if we run drm-backend using weston-launch */
-	compositor->launcher = weston_launcher_connect(compositor, config->tty,
-							   seat_id, true);
+	compositor->launcher = weston_launcher_connect(compositor, seat_id, true);
 	if (compositor->launcher == NULL) {
 		weston_log("fatal: drm backend should be run "
 				"using weston-launch binary or as root\n");
-		goto err_compositor;
+		goto err_base;
 	}
 
 	if (init_drm_early(b) < 0) {
@@ -3631,8 +3680,6 @@ err_sprite:
 	gbm_device_destroy(b->gbm);
 err_launcher:
 	weston_launcher_destroy(compositor->launcher);
-err_compositor:
-	weston_compositor_shutdown(compositor);
 err_base:
 	weston_log_scope_destroy(b->debug);
 	free(b);

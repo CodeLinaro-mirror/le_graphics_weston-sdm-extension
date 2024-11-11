@@ -27,7 +27,7 @@
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -37,6 +37,7 @@
 #include <libweston-private/linux-dmabuf.h>
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "gbm_priv.h"
+#include <libweston-private/libweston-internal.h>
 
 struct early_renderer {
 	struct weston_renderer base;
@@ -109,17 +110,6 @@ early_renderer_destroy(struct weston_compositor *ec){
 }
 
 static void
-early_renderer_surface_set_color(struct weston_surface *surface,
-		float red, float green, float blue, float alpha)
-{
-	surface->surf_color.red = red;
-	surface->surf_color.blue= blue;
-	surface->surf_color.green = green;
-	surface->surf_color.alpha = alpha;
-	surface->surf_color.is_pended = true;
-}
-
-static void
 early_renderer_flush_damage(struct weston_surface *surface)
 {
 }
@@ -137,14 +127,19 @@ early_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 
 	shm_buffer = wl_shm_buffer_get(buffer->resource);
 	if (shm_buffer) {
+		buffer->type = WESTON_BUFFER_SHM;
 		buffer->shm_buffer = shm_buffer;
 		buffer->width = wl_shm_buffer_get_width(shm_buffer);
 		buffer->height = wl_shm_buffer_get_height(shm_buffer);
 	} else if ((gbmbuf = gbm_buffer_backend_c_interface.buffer_get(buffer->resource))){
+		buffer->type = WESTON_BUFFER_GBMBUF;
+		buffer->gbmbuf = gbmbuf;
 		buffer->width = gbmbuf->width;
 		buffer->height = gbmbuf->height;
-		buffer->y_inverted =
-			!!(gbmbuf->flags & ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_Y_INVERT);
+		if (gbmbuf->flags & ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_Y_INVERT)
+			buffer->buffer_origin = ORIGIN_BOTTOM_LEFT;
+		else
+			buffer->buffer_origin = ORIGIN_TOP_LEFT;
 	}
 }
 
@@ -161,9 +156,7 @@ int early_renderer_init(struct weston_compositor *ec,
 	renderer->base.repaint_output = NULL;
 	renderer->base.flush_damage = early_renderer_flush_damage;
 	renderer->base.attach = early_renderer_attach;
-	renderer->base.surface_set_color = early_renderer_surface_set_color;
 	renderer->base.destroy = early_renderer_destroy;
-	renderer->base.surface_get_content_size = NULL;
 	renderer->base.surface_copy_content = NULL;
 	renderer->base.import_dmabuf     = NULL;
 	renderer->base.import_gbm_buffer = early_renderer_import_gbm_buffer;

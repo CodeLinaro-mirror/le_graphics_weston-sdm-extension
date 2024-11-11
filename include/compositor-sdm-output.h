@@ -52,7 +52,7 @@
  * SOFTWARE.
  *
  * Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include "config.h"
@@ -76,8 +76,8 @@
 #include <gbm.h>
 #include <gbm_priv.h>
 #include <libudev.h>
-#include "weston-shared/helpers.h"
-#include "weston-shared/timespec-util.h"
+#include "shared/helpers.h"
+#include "shared/timespec-util.h"
 #include <libweston-private/libinput-seat.h>
 #ifdef __cplusplus
 extern "C" {
@@ -86,6 +86,7 @@ extern "C" {
 #include <libweston-private/backend.h>
 #include <libweston-private/linux-dmabuf.h>
 #include <libweston-private/linux-explicit-synchronization.h>
+#include <libweston-private/pixel-formats.h>
 #include <gbm-buffer-backend.h>
 #include <screen-capture.h>
 #ifdef __cplusplus
@@ -147,7 +148,7 @@ struct drm_backend {
   int render_fd; /* DRM render node file description */
   struct gbm_device *gbm;
   struct wl_listener session_listener;
-  uint32_t format;
+  const struct pixel_format_info *format;
   int no_addfb3;
   int use_pixman;
   bool use_pixman_shadow;
@@ -187,6 +188,7 @@ struct drm_edid {
 struct sdm_layer {
   struct wl_list link; /* drm_output::sdm_layer_list */
   struct weston_view *view;
+  struct weston_paint_node *pnode;
   struct weston_buffer_reference buffer_ref;
   bool is_cursor;
   bool is_skip;
@@ -201,6 +203,7 @@ struct sdm_layer {
 struct early_layer {
   struct wl_list link; /* drm_output::early_layer_list */
   struct weston_view *view;
+  struct weston_paint_node *pnode;
   struct gbm_bo *bo;
   struct weston_buffer_reference buffer_ref;
   uint32_t fb_id;
@@ -214,7 +217,17 @@ struct early_layer {
 
 struct drm_output;
 
+enum drm_fb_type {
+  BUFFER_INVALID = 0, /**< never used */
+  BUFFER_CLIENT, /**< directly sourced from client */
+  BUFFER_DMABUF, /**< imported from linux_dmabuf client */
+  BUFFER_PIXMAN_DUMB, /**< internal Pixman rendering */
+  BUFFER_GBM_SURFACE, /**< internal EGL rendering */
+  BUFFER_CURSOR, /**< internal cursor buffer */
+};
+
 struct drm_fb {
+  enum drm_fb_type type;
   struct drm_output *output;
   uint32_t fb_id, stride, handle, size;
   int ion_fd;
@@ -227,6 +240,8 @@ struct drm_fb {
 
   /* Used by dumb fbs */
   void *map;
+
+  int refcnt;
 };
 
 struct drm_output {
@@ -240,7 +255,7 @@ struct drm_output {
   drmModeCrtcPtr original_crtc;
   struct drm_edid edid;
   drmModePropertyPtr dpms_prop;
-  uint32_t format;
+  const struct pixel_format_info *format;
 
   enum dpms_enum dpms;
 
@@ -261,9 +276,8 @@ struct drm_output {
   struct backlight *backlight;
 
   struct drm_fb *dumb[2];
-  pixman_image_t *image[2];
+  struct weston_renderbuffer *renderbuffer[2];
   int current_image;
-  pixman_region32_t previous_damage;
 
   struct vaapi_recorder *recorder;
   struct wl_listener recorder_frame_listener;
