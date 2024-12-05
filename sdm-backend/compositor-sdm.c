@@ -216,7 +216,6 @@ static struct drm_fb *
 drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 {
 	struct drm_fb *fb;
-	int ret;
 
 	struct drm_mode_create_dumb create_arg;
 	struct drm_mode_destroy_dumb destroy_arg;
@@ -254,11 +253,8 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	pitches[0] = fb->stride;
 
 	weston_log("fb w %d h %d stride %d handle %d drmfd %d\n", width, height, fb->stride, fb->handle, b->drm.fd);
-	weston_log("ret %d\n", ret);
-	if (ret)
-		goto err_bo;
-
 	weston_log("fb map\n");
+
 	fb->map = gbm_bo_map(fb->bo, 0, 0, width, height, GBM_BO_USE_WRITE, &fb->stride, &map_data);
 	if (fb->map == MAP_FAILED)
 		goto err_add_fb;
