@@ -27,7 +27,7 @@
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -53,7 +53,7 @@ enum {
 };
 
 CoreInterface *core_intf_ = NULL;
-NotifierInterface *notifier_intf_ = NULL;
+
 SdmDisplayBufferAllocator buffer_allocator_;
 SdmDisplayBufferSyncHandler buffer_sync_handler_;
 SdmDisplaySocketHandler socket_handler_;
@@ -75,7 +75,7 @@ int CreateCore()
 
   error = CoreInterface::CreateCore(&buffer_allocator_,
                                     &buffer_sync_handler_,
-                                    &socket_handler_,
+                                    &socket_handler_, nullptr,
                                     &core_intf_);
   if (!core_intf_) {
     DLOGE("function failed. Error = %d", error);
@@ -86,11 +86,7 @@ int CreateCore()
   DLOGD("successfully created.");
   #endif
 
-  core_intf_->GetNotifierInterface(&notifier_intf_);
-  if (!notifier_intf_) {
-    DLOGE("GetNotifierInterface failed. Error = %d", error);
-    return error;
-  }
+  core_intf_->SetMaxBandwidthMode(kBwVFEOn);
 
   return kErrorNone;
 }
@@ -122,7 +118,6 @@ int DestroyCore() {
     return error;
   }
   core_intf_ = NULL;
-  notifier_intf_ = NULL;
 
   #if SDM_DISPLAY_DEBUG
   DLOGD("Core was destroyed successfully");
@@ -157,7 +152,7 @@ void HandlePrimaryDisplayInfo() {
   }
 }
 
-void HandleNonPrimaryDisplayInfos(DisplayType type) {
+void HandleNonPrimaryDisplayInfos(SDMDisplayType type) {
   HWDisplaysInfo::iterator iter = hw_displays_info_.begin();
   int slot = sdm_displays_info_.size();
 
@@ -293,7 +288,7 @@ char *GetConnectorName(uint32_t display_id) {
       break;
   }
 
-  snprintf(name, sizeof name, "%s-%d", type_name, iter->second.display_type_id);
+  snprintf(name, sizeof name, "%s-%d", type_name, iter->second.display_id);
   return strdup(name);
 }
 
@@ -311,7 +306,7 @@ static HWDisplayInfo GetSdmDisplayInfo(int display_id) {
 
 int CreateDisplay(int display_id) {
   DisplayError error = kErrorNone;
-  enum DisplayType display_type = kDisplayMax;
+  enum SDMDisplayType display_type = kDisplayMax;
   HWDisplayInfo display_info = {};
 
   if (display_id >= MAX_SUPPORT_DISPLAYS || display_id < 0) {
@@ -623,7 +618,8 @@ int UpdateDisplayPll(int display_id, int enable) {
 }
 
 int SetPlaneInitState() {
-  return notifier_intf_->PipesStateChanged();
+  /* TODO notify SDM the plane state */
+  return 0;
 }
 
 int SetHead(int display_id, drm_head* head) {
