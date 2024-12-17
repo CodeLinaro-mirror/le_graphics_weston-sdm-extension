@@ -2689,6 +2689,8 @@ drm_head_create_early(struct drm_backend *backend, uint32_t display_id,struct Ea
 			name, NULL);
 	free(name);
 
+	head->base.backend = &backend->base;
+
 	uint32_t mmWidth  = display_config->x_pixels;
 	uint32_t mmHeight = display_config->y_pixels;
 	weston_head_set_subpixel(&head->base, WL_OUTPUT_SUBPIXEL_UNKNOWN);
@@ -3828,6 +3830,7 @@ weston_backend_init(struct weston_compositor *compositor,
 {
 	struct drm_backend *b;
 	struct weston_drm_backend_config config = {{ 0, }};
+	int ret = -1;
 
 	if (config_base == NULL ||
 		config_base->struct_version != WESTON_DRM_BACKEND_CONFIG_VERSION ||
@@ -3843,5 +3846,9 @@ weston_backend_init(struct weston_compositor *compositor,
 	if (b == NULL)
 		return -1;
 
-	return 0;
+	ret = weston_compositor_load_gbm_buffer_backend();
+	if (ret)
+		weston_log("Failed to load gbm buffer backend\n");
+
+	return ret;
 }
