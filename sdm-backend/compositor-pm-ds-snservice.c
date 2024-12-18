@@ -153,7 +153,6 @@ weston_compositor_destroy_snservice_listener(struct wl_listener *listener, void 
 
 	weston_compositor_disable_ds_event(notifier);
 	wl_list_remove(&notifier->compositor_destroy_listener.link);
-	free(notifier);
 }
 
 WL_EXPORT int
