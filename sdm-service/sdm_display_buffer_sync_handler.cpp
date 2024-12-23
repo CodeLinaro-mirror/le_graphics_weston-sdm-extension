@@ -25,6 +25,10 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Innovation Center are provided under the following license:
+* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #include <errno.h>
@@ -33,19 +37,21 @@
 
 #include "sdm_display_debugger.h"
 #include "sdm_display_buffer_sync_handler.h"
+#include <utils/fence.h>
 
 #define __CLASS__ "SdmDisplayBufferSyncHandler"
 
 namespace sdm {
 
 SdmDisplayBufferSyncHandler::SdmDisplayBufferSyncHandler() {
+  Fence::Set(this);
 }
 
-DisplayError SdmDisplayBufferSyncHandler::SyncWait(int fd) {
+int SdmDisplayBufferSyncHandler::SyncWait(int fd, int timeout) {
   int error = 0;
 
   if (fd >= 0) {
-    error = sync_wait(fd, 1000);
+    error = sync_wait(fd, timeout);
     if (error < 0) {
       DLOGE("sync_wait error errno = %d, desc = %s", errno,  strerror(errno));
       return kErrorTimeOut;
@@ -55,9 +61,9 @@ DisplayError SdmDisplayBufferSyncHandler::SyncWait(int fd) {
   return kErrorNone;
 }
 
-DisplayError SdmDisplayBufferSyncHandler::SyncMerge(int fd1,
-                                                    int fd2,
-                                                    int *merged_fd) {
+int SdmDisplayBufferSyncHandler::SyncMerge(int fd1,
+                                           int fd2,
+                                           int *merged_fd) {
   DisplayError error = kErrorNone;
 
   // Merge the two fences.  In the case where one of the fences is not a

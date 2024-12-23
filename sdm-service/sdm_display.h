@@ -27,16 +27,17 @@
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef __SDM_DISPLAY_H__
 #define __SDM_DISPLAY_H__
 
+#include "config.h"
 #include <core/core_interface.h>
 #include <core/display_interface.h>
-#include <core/notifier_interface.h>
+#include <utils/fence.h>
 #include <debug_handler.h>
 #include <utils/debug.h>
 #include <utils/constants.h>
@@ -57,6 +58,7 @@
 #include "sdm_display_socket_handler.h"
 #include "compositor-sdm-output.h"
 #include "drm_master.h"
+#include "sdm_layer.h"
 
 namespace sdm {
 using namespace drm_utils;
@@ -75,6 +77,7 @@ typedef std::map<uint32_t, HWDisplayInfo> SdmDisplaysInfo;
 class SdmLayerManager {
 public:
   Layer *get_layer(struct sdm_layer *layer);
+  uint64_t generate_layer_id();
 private:
   struct SdmLayer {
     SdmLayerManager *layer_manager_;
@@ -83,7 +86,9 @@ private:
   };
   static void destroy(struct wl_listener *listener, void *data);
   std::map<struct weston_view*, SdmLayer*> layer_cache_;
+  std::map<uint64_t, uint64_t> layer_id_cache_;
   std::mutex lock_;
+  uint64_t layer_id_seed = 0;
 };
 
 class SdmBufferManager {
@@ -128,7 +133,7 @@ public:
 
 class SdmNullDisplay : public SdmDisplayInterface {
 public:
-  SdmNullDisplay(int32_t display_id, DisplayType type, CoreInterface *core_intf);
+  SdmNullDisplay(int32_t display_id, SDMDisplayType type, CoreInterface *core_intf);
   ~SdmNullDisplay();
 
   SdmDisplayIntfType GetDisplayIntfType() {
@@ -153,7 +158,7 @@ public:
 
 class SdmDisplay : public SdmDisplayInterface, DisplayEventHandler, SdmDisplayDebugger {
 public:
-  SdmDisplay(int32_t display_id, DisplayType type, CoreInterface *core_intf);
+  SdmDisplay(int32_t display_id, SDMDisplayType type, CoreInterface *core_intf);
   ~SdmDisplay();
 
   SdmDisplayIntfType GetDisplayIntfType() {
@@ -189,6 +194,8 @@ protected:
   virtual DisplayError CECMessage(char *message);
   virtual DisplayError HandleEvent(DisplayEvent event);
   virtual DisplayError Refresh();
+  virtual DisplayError HistogramEvent(int source_fd, uint32_t blob_id) {};
+  virtual void MMRMEvent(bool restricted) {};
 
 private:
   static const int kBufferDepth = 2;
@@ -229,7 +236,7 @@ private:
   void ComputeSrcDstRect(struct drm_output *output, struct weston_view *ev,
                          struct Rect *src_ret, struct Rect *dst_ret);
   int ComputeDirtyRegion(struct weston_view *ev, struct RectArray *dirty);
-  uint8_t GetGlobalAlpha(struct weston_view *ev);
+  uint16_t GetGlobalAlpha(struct weston_view *ev);
   int GetVisibleRegion(struct drm_output *output, struct weston_view *ev,
                        pixman_region32_t *aboved_opaque, struct RectArray *visible);
   bool IsTransparentGbmFormat(uint32_t format);
@@ -239,7 +246,7 @@ private:
   SdmDisplaySocketHandler socket_handler_;
   DisplayEventHandler *client_event_handler_ = NULL;
   DisplayInterface *display_intf_ = NULL;
-  DisplayType display_type_ = kDisplayMax;
+  SDMDisplayType display_type_ = kDisplayMax;
   DisplayConfigVariableInfo variable_info_;
   HWDisplayInterfaceInfo hw_disp_info_;
   bool shutdown_pending_ = false;
@@ -262,7 +269,7 @@ private:
 
 class SdmDisplayProxy {
 public:
-  SdmDisplayProxy(int32_t display_id, DisplayType type, CoreInterface *core_intf);
+  SdmDisplayProxy(int32_t display_id, SDMDisplayType type, CoreInterface *core_intf);
   ~SdmDisplayProxy();
 
   DisplayError CreateDisplay() { return display_intf_->CreateDisplay(); }
@@ -311,7 +318,7 @@ private:
 
   SdmDisplayInterface *display_intf_;
   int32_t display_id_ = -1;
-  DisplayType disp_type_;
+  SDMDisplayType disp_type_;
   CoreInterface *core_intf_;
   SdmNullDisplay null_disp_;
   SdmDisplay sdm_disp_;
