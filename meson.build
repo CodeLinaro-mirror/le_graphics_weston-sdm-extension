@@ -112,6 +112,11 @@ if get_option('enable-pm-snservice')
 	dep_libpm_client = cc.find_library('libpm-client')
 endif
 
+if get_option('enable-rt_schedule')
+	dep_compresmgr_client = cc.find_library('compresmgr_client')
+	config_h.set('RT_SCHEDULE', '1')
+endif
+
 dep_libdrm_version = dep_libdrm.version()
 if dep_libdrm_version.version_compare('>=2.4.107')
 	message('Found libdrm with human format modifier support.')
