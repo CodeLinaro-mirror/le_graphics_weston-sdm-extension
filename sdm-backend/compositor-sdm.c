@@ -1104,7 +1104,17 @@ static void
 destroy_sdm_layer(struct sdm_layer *layer)
 {
 	pixman_region32_fini(&layer->overlap);
-	weston_buffer_reference(&layer->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
+
+	/* SHM buffer could already been released after gpu composition.
+	 * For GPU composition buffers, let renderer take charge to manage buffer object reference
+	 * to prevent unexpected buffer release event.
+	 */
+	if (!layer->is_skip) {
+		weston_buffer_reference(&layer->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
+	} else {
+		layer->buffer_ref.buffer = NULL;
+	}
+
 	wl_list_remove(&layer->link);
 	if (layer->bo) {
 		gbm_bo_destroy(layer->bo);
@@ -1131,7 +1141,16 @@ create_sdm_layer(struct drm_output *output, struct weston_paint_node *pnode, pix
 
 	pixman_region32_init(&layer->overlap);
 	pixman_region32_copy(&layer->overlap, overlap);
-	weston_buffer_reference(&layer->buffer_ref, ev->surface->buffer_ref.buffer, BUFFER_MAY_BE_ACCESSED);
+
+	/* SHM buffer could already been released after gpu composition.
+	 * For GPU composition buffers, let renderer take charge to manage buffer object reference
+	 * to prevent unexpected buffer release event.
+	 */
+	if (!is_skip) {
+		weston_buffer_reference(&layer->buffer_ref, ev->surface->buffer_ref.buffer, BUFFER_MAY_BE_ACCESSED);
+	} else {
+		layer->buffer_ref.buffer = ev->surface->buffer_ref.buffer;
+	}
 
 	return layer;
 }
