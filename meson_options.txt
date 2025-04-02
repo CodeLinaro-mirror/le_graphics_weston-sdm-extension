@@ -12,3 +12,23 @@ option(
         description: 'Enable address sanitizers tool'
 )
 
+option(
+	'enable-pm-dbus',
+	type: 'boolean',
+	value: false,
+	description: 'Enable pm dbus'
+)
+
+option(
+	'enable-pm-snservice',
+	type: 'boolean',
+	value: false,
+	description: 'Enable pm snservice'
+)
+
+option(
+	'enable-rt_schedule',
+	type: 'boolean',
+	value: false,
+	description: 'Enable real-time shcedule'
+)
