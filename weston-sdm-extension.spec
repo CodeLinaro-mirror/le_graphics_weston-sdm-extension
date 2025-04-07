@@ -14,6 +14,7 @@ BuildRequires: display-hal-dev display-hal display-noship display-ship-dev
 BuildRequires: libwayland-egl libwayland-server libwayland-client wayland-devel wayland-protocols-devel
 BuildRequires: weston weston-libs weston-devel
 BuildRequires: bootkpi-logging
+BuildRequires: compresmgr_client
 
 %description
 Provides QTI specific header files
