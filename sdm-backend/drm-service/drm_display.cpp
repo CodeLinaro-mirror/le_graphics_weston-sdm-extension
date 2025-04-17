@@ -26,7 +26,7 @@
 * SOFTWARE.
 *
 * Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+* Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -493,8 +493,7 @@ int early_layer_prepare(struct early_layer *layer, struct drm_output *output) {
   struct gbm_bo *bo;
   struct gbm_buffer *gbm_buf;
   uint32_t fb_id;
-  struct drm_backend *b =
-    (struct drm_backend *)output->base.compositor->backend;
+  struct drm_backend *b = (struct drm_backend *)output->base.backend;
   int ret = -1;
 
   assert(buffer != NULL);
@@ -534,7 +533,7 @@ int early_layer_prepare(struct early_layer *layer, struct drm_output *output) {
     gbm_bo_destroy(bo);
     return ret;
   }
-  weston_buffer_reference(&layer->buffer_ref, buffer);
+  weston_buffer_reference(&layer->buffer_ref, buffer, BUFFER_MAY_BE_ACCESSED);
   gbm_bo_set_user_data(bo, layer, early_layer_destroy_callback);
 
   return 0;
@@ -591,94 +590,39 @@ static uint32_t early_search_pipe(display_id disp_id, bool vig_required, bool is
   return 0;
 }
 
-static void early_compute_src_dst_rect(struct drm_output *output, struct weston_view *ev,
+static void early_compute_src_dst_rect(struct drm_output *output, struct weston_paint_node *node,
   struct Rect *src_ret, struct Rect *dst_ret) {
+  struct weston_view *ev = node->view;
   struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
-  pixman_region32_t src_rect, dest_rect;
-  pixman_box32_t *box, tbox;
+  pixman_region32_t dest_rect;
+  pixman_box32_t *box;
+  struct weston_coord corners[2];
   float sxf1, syf1, sxf2, syf2;
 
   /* dst rect */
   pixman_region32_init(&dest_rect);
   pixman_region32_intersect(&dest_rect, &ev->transform.boundingbox, &output->base.region);
 
-  pixman_region32_translate(&dest_rect, -output->base.x, -output->base.y);
+  weston_matrix_transform_region(&dest_rect, &output->base.matrix, &dest_rect);
   box = pixman_region32_extents(&dest_rect);
 
-  {
-    enum wl_output_transform buffer_transform1 = WL_OUTPUT_TRANSFORM_NORMAL;
-
-    switch(output->base.transform) {
-      case 0:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_NORMAL;
-        break;
-      case 1:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_90;
-        break;
-      case 2:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_180;
-        break;
-      case 3:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_270;
-        break;
-      case 4:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED;
-        break;
-      case 5:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED_90;
-        break;
-      case 6:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED_180;
-        break;
-      case 7:
-        buffer_transform1 = WL_OUTPUT_TRANSFORM_FLIPPED_270;
-        break;
-      default:
-        weston_log("Invalid buffer transform not supported: %d",
-                   output->base.transform);
-        pixman_region32_fini(&dest_rect);
-        return;
-    }
-
-    tbox = weston_transformed_rect(output->base.width,
-        output->base.height,
-        buffer_transform1,
-        output->base.current_scale,
-        *box);
-  }
-
-  dst_ret->left = (float)tbox.x1;
-  dst_ret->top = (float)tbox.y1;
-  dst_ret->right = (float)tbox.x2;
-  dst_ret->bottom = (float)tbox.y2;
+  dst_ret->left = (float)box->x1;
+  dst_ret->top = (float)box->y1;
+  dst_ret->right = (float)box->x2;
+  dst_ret->bottom = (float)box->y2;
   pixman_region32_fini(&dest_rect);
 
   /* src rect */
-  pixman_region32_init(&src_rect);
-  pixman_region32_intersect(&src_rect, &ev->transform.boundingbox,
-                            &output->base.region);
-  box = pixman_region32_extents(&src_rect);
-
-  switch(viewport->buffer.transform) {
-    case WL_OUTPUT_TRANSFORM_NORMAL: break;
-    case WL_OUTPUT_TRANSFORM_90: break;
-    case WL_OUTPUT_TRANSFORM_180: break;
-    case WL_OUTPUT_TRANSFORM_270: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED_90: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED_180: break;
-    case WL_OUTPUT_TRANSFORM_FLIPPED_270: break;
-    default:
-      weston_log("Invalid buffer transform not supported: %d", viewport->buffer.transform);
-      pixman_region32_fini(&src_rect);
-      return;
-  }
-
-  weston_view_from_global_float(ev, box->x1, box->y1, &sxf1, &syf1);
-  weston_surface_to_buffer_float(ev->surface, sxf1, syf1, &sxf1, &syf1);
-  weston_view_from_global_float(ev, box->x2, box->y2, &sxf2, &syf2);
-  weston_surface_to_buffer_float(ev->surface, sxf2, syf2, &sxf2, &syf2);
-  pixman_region32_fini(&src_rect);
+  corners[0] = weston_matrix_transform_coord(
+      &node->output_to_buffer_matrix,
+      weston_coord(box->x1, box->y1));
+  corners[1] = weston_matrix_transform_coord(
+      &node->output_to_buffer_matrix,
+      weston_coord(box->x2, box->y2));
+  sxf1 = corners[0].x;
+  syf1 = corners[0].y;
+  sxf2 = corners[1].x;
+  syf2 = corners[1].y;
 
   /* Buffer transforms may mean that x2 is to the left of x1, and/or that
    * y2 is above y1. */
@@ -761,7 +705,7 @@ int early_prepare(struct drm_output *output) {
   bool vig_required;
 
   wl_list_for_each_reverse(layer, &output->early_layer_list, link) {
-    early_compute_src_dst_rect(output, layer->view, &src_rect, &dst_rect);
+    early_compute_src_dst_rect(output, layer->pnode, &src_rect, &dst_rect);
     vig_required = layer->yuv_required || (src_rect.right - src_rect.left) !=
       (dst_rect.right - dst_rect.left) || (src_rect.top - src_rect.bottom) !=
       (dst_rect.top - dst_rect.bottom);

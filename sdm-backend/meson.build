@@ -42,7 +42,8 @@ lib_screen_capture = shared_library(
 	dependencies: deps_screen_capture,
 	name_prefix: '',
 	install: true,
-	install_dir: dir_module_libweston
+	install_dir: dir_module_libweston,
+	install_rpath: '$ORIGIN'
 )
 dep_screen_capture = declare_dependency(
 	link_with: lib_screen_capture,
@@ -94,7 +95,8 @@ plugin_drm = shared_library(
 	dependencies: deps_drm,
 	name_prefix: '',
 	install: true,
-	install_dir: dir_module_libweston
+	install_dir: dir_module_libweston,
+	install_rpath: '$ORIGIN'
 )
 
 deps_pm_ds = [
