@@ -47,8 +47,8 @@
 * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -901,21 +901,26 @@ do_screen_capture(struct screen_capture *screen_cap,
 }
 
 static int
-drm_output_repaint(struct weston_output *output_base,
-		pixman_region32_t *damage)
+drm_output_repaint(struct weston_output *output_base)
 {
 	struct drm_backend *backend = to_drm_backend(output_base->compositor);
 	struct screen_capture *screen_cap = backend->screen_cap;
+
+	pixman_region32_t damage;
+
+	pixman_region32_init(&damage);
+
+	weston_output_flush_damage_for_primary_plane(output_base, &damage);
 
 	/* Backend is not full ready, do early repaint. */
 	if (!backend->sdm_repaint)
 		return drm_output_repaint_early(output_base);
 
-	output_repaint(output_base, damage, false);
+	output_repaint(output_base, &damage, false);
 
 	/* Do output repaint for virtual output. */
 	if (screen_capture_c_interface.is_capture_ready(screen_cap, output_base) && screen_cap->next)
-		do_screen_capture(screen_cap, damage);
+		do_screen_capture(screen_cap, &damage);
 
 	return 0;
 }
