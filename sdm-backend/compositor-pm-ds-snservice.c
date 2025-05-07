@@ -11,7 +11,7 @@
 #include <wayland-server.h>
 #include <libweston/zalloc.h>
 #include <libweston/libweston.h>
-#include "weston-shared/helpers.h"
+#include "shared/helpers.h"
 
 #ifndef EOK
 #define EOK 0
