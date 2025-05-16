@@ -26,8 +26,8 @@
 *    OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 *    IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
-*    Changes from Qualcomm Innovation Center are provided under the following license:
-*    Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+*    Changes from Qualcomm Technologies, Inc. are provided under the following license:
+*    Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 *    SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -327,23 +327,26 @@ is_screen_capture_buffer(struct weston_buffer *buffer)
 static bool
 is_screen_capture_view(struct weston_view *ev)
 {
-	if (ev->is_capture_view)
-		return true;
+	if (ev)
+	{
+		if (ev->is_capture_view)
+			return true;
 
-	if (ev && ev->surface && ev->surface->buffer_ref.buffer) {
-		struct gbm_buffer *gbm_buf =
+		if (ev->surface && ev->surface->buffer_ref.buffer) {
+			struct gbm_buffer *gbm_buf =
 				gbm_buffer_backend_c_interface.buffer_get(ev->surface->buffer_ref.buffer->resource);
 
-		if (gbm_buf &&
+			if (gbm_buf &&
 				gbm_buf->flags & GBM_BUFFER_PARAMS_FLAGS_SCREEN_CAPTURE) {
-			/*
-			 * ev->surface->buffer_ref.buffer will be NULL during close
-			 * animation of screen capture application, if no hint is
-			 * stored, the last frame of screen capture application will be
-			 * used as texture during composition, which is not expected.
-			 */
-			ev->is_capture_view = true;
-			return true;
+				/*
+				 * ev->surface->buffer_ref.buffer will be NULL during close
+				 * animation of screen capture application, if no hint is
+				 * stored, the last frame of screen capture application will be
+				 * used as texture during composition, which is not expected.
+				 */
+				ev->is_capture_view = true;
+				return true;
+			}
 		}
 	}
 
