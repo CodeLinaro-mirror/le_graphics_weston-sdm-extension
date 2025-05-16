@@ -25,3 +25,10 @@ option(
 	value: false,
 	description: 'Enable pm snservice'
 )
+
+option(
+	'enable-rt_schedule',
+	type: 'boolean',
+	value: false,
+	description: 'Enable real-time shcedule'
+)
