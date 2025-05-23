@@ -4,3 +4,30 @@ option(
 	value: false,
 	description: 'Early boot weston'
 )
+
+option(
+	'ASAN',
+	type: 'boolean',
+	value: false,
+	description: 'Enable address sanitizers tool'
+)
+
+option(
+	'enable-pageflip',
+	type: 'boolean',
+	value: true,
+)
+
+option(
+	'enable-pm-dbus',
+	type: 'boolean',
+	value: false,
+	description: 'Enable pm dbus'
+)
+
+option(
+	'enable-pm-snservice',
+	type: 'boolean',
+	value: false,
+	description: 'Enable pm snservice'
+)
