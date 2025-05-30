@@ -3509,7 +3509,7 @@ static void *full_init_main(void *arg) {
 		}
 		wl_event_source_timer_update(b->finish_full_init, 1);
 
-		free(param);
+		free(para);
 		return NULL;
 	}
 
@@ -3540,10 +3540,7 @@ err_sdm_core:
 err_udev:
 	udev_unref(b->udev);
 err_base:
-	if (b->early_boot)
-		free(param);
-	else
-		param->success = false;
+	param->success = false;
 	return NULL;
 }
 
