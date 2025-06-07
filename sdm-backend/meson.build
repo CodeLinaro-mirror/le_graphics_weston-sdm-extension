@@ -126,10 +126,13 @@ if get_option('enable-pm-dbus')
 endif
 
 if get_option('enable-pm-snservice')
+	dep_glib = dependency('glib-2.0')
+
 	deps_pm_ds_snservice = [
 		dep_libpm_client,
 		dep_libsystemd,
 		dep_libweston_private,
+		dep_glib,
 	]
 
 	plugin_compositor_pm_ds_snservice = shared_library(
