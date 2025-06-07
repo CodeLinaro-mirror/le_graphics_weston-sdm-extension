@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <sys/eventfd.h>
 #include <pm_client_lib.h>
+#include <pcm_client_lib.h>
 #include <wayland-server.h>
 #include <libweston/zalloc.h>
 #include <libweston/libweston.h>
@@ -74,11 +75,45 @@ weston_compositor_ds_resume(void *data, enum PM_MODE mode)
 	return EOK;
 }
 
+static int
+weston_compositor_lpm_impose(void *data, int level)
+{
+	struct snservice_notifier *notifier = (struct snservice_notifier *)data;
+	uint64_t u = EVENT_MAX;
+	int32_t ret = EOK;
+
+	if (!notifier) {
+		weston_log("LPM Impose: notifier null \n");
+		return E_NOK;
+	}
+
+	switch (level)
+	{
+		case VPP_VLVL_OFF:
+			u = EVENT_SUSPEND;
+			break;
+		case VPP_VLVL_SVS_L1:
+		case VPP_VLVL_NOM:
+		case VPP_VLVL_TUR:
+		case VPP_VLVL_TUR_L1:
+			u = EVENT_RESUME;
+			break;
+		default:
+			weston_log("LPM Impose: Unknown impose level %d\n", level);
+			ret = E_NOK;
+			break;
+	}
+	weston_log("LPM Impose: Trigger impose event with level %d\n", level);
+	write(notifier->pm_ev_fd, &u, sizeof(uint64_t));
+
+	return ret;
+}
+
+
 static void
 snservice_ds_handler(int fd, uint32_t mask, void* data)
 {
 	struct snservice_notifier *notifier = data;
-	int ret = EOK;
 	uint64_t event_type;
 
 	read(fd, &event_type, sizeof(uint64_t));
@@ -86,15 +121,14 @@ snservice_ds_handler(int fd, uint32_t mask, void* data)
 	{
 		case EVENT_SUSPEND:
 			weston_compositor_sleep(notifier->compositor);
-			weston_log("SN Suspend: weston sleep \n ");
+			weston_log("PM Suspend: weston sleep \n");
 			break;
-
 		case EVENT_RESUME:
 			weston_compositor_wake(notifier->compositor);
-			weston_log("SN Resume: weston wakeup \n");
+			weston_log("PM Resume: weston wakeup \n");
 			break;
 		default:
-			weston_log("SN: Unknown pm event type \n");
+			weston_log("PM: Unknown pm event type %d\n", event_type);
 			break;
 	}
 }
@@ -173,6 +207,7 @@ wet_module_init(struct weston_compositor *compositor, int *argc, char *argv[])
 	snservice_notifier.compositor = compositor;
 	snservice_notifier.ops.pm_enter = weston_compositor_ds_suspend;
 	snservice_notifier.ops.pm_exit = weston_compositor_ds_resume;
+	snservice_notifier.ops.impose = weston_compositor_lpm_impose;
 
 	ret = weston_compositor_enable_ds_event(&snservice_notifier);
 	if (ret) {
