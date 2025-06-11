@@ -88,6 +88,12 @@ if get_option('enable-early-boot')
 	deps_drm += dependency('threads')
 endif
 
+if get_option('enable-rt_schedule')
+	config_h.set('ENABLE_RT_SCHEDULE', '1')
+	deps_drm += cc.find_library('compresmgr_client')
+endif
+
+
 plugin_drm = shared_library(
 	'drm-backend',
 	srcs_drm,

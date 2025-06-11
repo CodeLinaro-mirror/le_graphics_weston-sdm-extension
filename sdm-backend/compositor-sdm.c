@@ -104,6 +104,10 @@
 #include "bootkpi/logging.h"
 #include "gbm-buffer-backend.h"
 
+#if defined(ENABLE_RT_SCHEDULE)
+#include "amss/compresmgr_client_api.h"
+#endif
+
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
 #endif
@@ -3683,6 +3687,14 @@ drm_backend_create(struct weston_compositor *compositor,
 	int ret;
 	struct weston_head *base, *next;
 
+#if defined(ENABLE_RT_SCHEDULE)
+	CPUConfigReq_t     cpuConfigReq  = {0};
+	CPUConfigResp_t    cpuConfigResp = {0};
+	const char        *procName      = "display";
+	const char        *thrdGrpName   = "SDM_compositor";
+	struct sched_param params;
+#endif
+
 	session_seat = getenv("XDG_SEAT");
 	if (session_seat)
 		seat_id = session_seat;
@@ -3807,6 +3819,26 @@ drm_backend_create(struct weston_compositor *compositor,
 			free(full_init_param);
 			goto err_display;
 		}
+#if defined(ENABLE_RT_SCHEDULE)
+		memset((char *)&params, 0x00, sizeof(struct sched_param));
+		strlcpy(cpuConfigReq.procName, procName, strlen(procName) + 1);
+		strlcpy(cpuConfigReq.thrdGrpName, thrdGrpName, strlen(thrdGrpName) + 1);
+
+		CompResmgrRet_e ret = CompResmgrGetCPUConfig(&cpuConfigReq, &cpuConfigResp);
+
+		if (COMPRESMGR_RET_SUCCESS == ret)
+		{
+			params.sched_priority = cpuConfigResp.priority;
+
+			if (0 != pthread_setname_np(full_init_tid, cpuConfigReq.thrdGrpName)) {
+				weston_log("pthread_setname_np: %s failed\n", cpuConfigReq.thrdGrpName);
+			} else if (0 != pthread_setschedparam(full_init_tid, cpuConfigResp.schedPolicy, &params)) {
+				weston_log("pthread_setschedparam: %s failed\n", cpuConfigReq.thrdGrpName);
+			}
+		} else {
+			weston_log("CompResmgrGetCPUConfig: %s failed\n", cpuConfigReq.thrdGrpName);
+		}
+#endif
 	} else {
 		/* If early boot is disabled, do full backend initialization directly. */
 		full_init_main(full_init_param);
