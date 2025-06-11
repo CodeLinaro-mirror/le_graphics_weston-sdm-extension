@@ -47,8 +47,8 @@
 * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -901,21 +901,26 @@ do_screen_capture(struct screen_capture *screen_cap,
 }
 
 static int
-drm_output_repaint(struct weston_output *output_base,
-		pixman_region32_t *damage)
+drm_output_repaint(struct weston_output *output_base)
 {
 	struct drm_backend *backend = to_drm_backend(output_base->compositor);
 	struct screen_capture *screen_cap = backend->screen_cap;
+
+	pixman_region32_t damage;
+
+	pixman_region32_init(&damage);
+
+	weston_output_flush_damage_for_primary_plane(output_base, &damage);
 
 	/* Backend is not full ready, do early repaint. */
 	if (!backend->sdm_repaint)
 		return drm_output_repaint_early(output_base);
 
-	output_repaint(output_base, damage, false);
+	output_repaint(output_base, &damage, false);
 
 	/* Do output repaint for virtual output. */
 	if (screen_capture_c_interface.is_capture_ready(screen_cap, output_base) && screen_cap->next)
-		do_screen_capture(screen_cap, damage);
+		do_screen_capture(screen_cap, &damage);
 
 	return 0;
 }
@@ -1104,7 +1109,17 @@ static void
 destroy_sdm_layer(struct sdm_layer *layer)
 {
 	pixman_region32_fini(&layer->overlap);
-	weston_buffer_reference(&layer->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
+
+	/* SHM buffer could already been released after gpu composition.
+	 * For GPU composition buffers, let renderer take charge to manage buffer object reference
+	 * to prevent unexpected buffer release event.
+	 */
+	if (!layer->is_skip) {
+		weston_buffer_reference(&layer->buffer_ref, NULL, BUFFER_WILL_NOT_BE_ACCESSED);
+	} else {
+		layer->buffer_ref.buffer = NULL;
+	}
+
 	wl_list_remove(&layer->link);
 	if (layer->bo) {
 		gbm_bo_destroy(layer->bo);
@@ -1131,7 +1146,16 @@ create_sdm_layer(struct drm_output *output, struct weston_paint_node *pnode, pix
 
 	pixman_region32_init(&layer->overlap);
 	pixman_region32_copy(&layer->overlap, overlap);
-	weston_buffer_reference(&layer->buffer_ref, ev->surface->buffer_ref.buffer, BUFFER_MAY_BE_ACCESSED);
+
+	/* SHM buffer could already been released after gpu composition.
+	 * For GPU composition buffers, let renderer take charge to manage buffer object reference
+	 * to prevent unexpected buffer release event.
+	 */
+	if (!is_skip) {
+		weston_buffer_reference(&layer->buffer_ref, ev->surface->buffer_ref.buffer, BUFFER_MAY_BE_ACCESSED);
+	} else {
+		layer->buffer_ref.buffer = ev->surface->buffer_ref.buffer;
+	}
 
 	return layer;
 }
@@ -3485,7 +3509,7 @@ static void *full_init_main(void *arg) {
 		}
 		wl_event_source_timer_update(b->finish_full_init, 1);
 
-		free(param);
+		free(para);
 		return NULL;
 	}
 
@@ -3516,10 +3540,7 @@ err_sdm_core:
 err_udev:
 	udev_unref(b->udev);
 err_base:
-	if (b->early_boot)
-		free(param);
-	else
-		param->success = false;
+	param->success = false;
 	return NULL;
 }
 
