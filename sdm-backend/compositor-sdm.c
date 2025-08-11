@@ -1500,7 +1500,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 			continue;
 		}
 
-		is_skip = true;
+		is_skip = is_skip_view(ev, output);
 
 		sdm_layer = create_sdm_layer(output, pnode, &above_opaque, is_cursor, is_skip);
 		if (sdm_layer == NULL) {
