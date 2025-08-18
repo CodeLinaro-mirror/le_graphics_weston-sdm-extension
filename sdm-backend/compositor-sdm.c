@@ -231,7 +231,6 @@ static struct drm_fb *
 drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 {
 	struct drm_fb *fb;
-	int ret;
 
 	struct drm_mode_create_dumb create_arg;
 	struct drm_mode_destroy_dumb destroy_arg;
@@ -271,11 +270,8 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	pitches[0] = fb->stride;
 
 	weston_log("fb w %d h %d stride %d handle %d drmfd %d\n", width, height, fb->stride, fb->handle, b->drm.fd);
-	weston_log("ret %d\n", ret);
-	if (ret)
-		goto err_bo;
-
 	weston_log("fb map\n");
+
 	fb->map = gbm_bo_map(fb->bo, 0, 0, width, height, GBM_BO_USE_WRITE, &fb->stride, &map_data);
 	if (fb->map == MAP_FAILED)
 		goto err_add_fb;
@@ -807,6 +803,29 @@ drm_output_repaint_early(struct weston_output *output_base)
 	return 0;
 }
 
+static void
+post_repaint(struct drm_output *output, bool is_virtual_output)
+{
+		struct sdm_layer *sdm_layer, *next_sdm_layer;
+
+		if (!is_virtual_output) {
+			drm_output_release_fb(output, output->current);
+		}
+		output->current = output->next;
+		output->next = NULL;
+		output->frame_pending = 0;
+
+		wl_list_for_each_safe(sdm_layer, next_sdm_layer, &output->commited_layer_list, link) {
+			destroy_sdm_layer(sdm_layer);
+		}
+
+		assert(wl_list_empty(&output->commited_layer_list));
+		wl_list_insert_list(&output->commited_layer_list, &output->sdm_layer_list);
+		wl_list_init(&output->sdm_layer_list);
+		if (!is_virtual_output)
+			wl_event_source_timer_update(output->finish_frame_timer, 16);
+}
+
 static int
 output_repaint(struct weston_output *output_base,
 		pixman_region32_t *damage, bool is_virtual_output)
@@ -846,34 +865,31 @@ output_repaint(struct weston_output *output_base,
 
 	if (ret) {
 		weston_log("fail to commit or flush to sdm display! err=%d\n", ret);
-
-		if (!is_virtual_output) {
-			drm_output_release_fb(output, output->current);
-		}
-		output->current = output->next;
-		output->next = NULL;
-		output->frame_pending = 0;
-
-		wl_list_for_each_safe(sdm_layer, next_sdm_layer, &output->commited_layer_list, link) {
-			destroy_sdm_layer(sdm_layer);
-		}
-
-		assert(wl_list_empty(&output->commited_layer_list));
-		wl_list_insert_list(&output->commited_layer_list, &output->sdm_layer_list);
-		wl_list_init(&output->sdm_layer_list);
-		if (!is_virtual_output)
-			wl_event_source_timer_update(output->finish_frame_timer, 16);
+		post_repaint(output, is_virtual_output);
 	} else {
 		output->frame_pending = 1;
 
-		if (output->retire_fence_fd > 0) {
+#if ENABLE_PAGEFLIP
+		if (output->retire_fence_fd >= 0)
+			close(output->retire_fence_fd);
+#else
+		if (output->retire_fence_fd >= 0) {
 			struct wl_event_loop *loop =
 					wl_display_get_event_loop(output->base.compositor->wl_display);
 
 			output->retire_fence_source = wl_event_loop_add_fd(loop,
 					output->retire_fence_fd, WL_EVENT_READABLE,
 					retire_fence_cb, output);
+		} else {
+			/* if Commit doesn't return fail, but retire fence fd is not valid, it means
+			 * this Commit was succed to HW, but creating fence failed in this
+			 * Commit. In this case, call post_repaint to update timer for next
+			 * frame
+			 */
+			weston_log("get fence fail, maybe some error happen\n");
+			post_repaint(output, is_virtual_output);
 		}
+#endif
 	}
 	return 0;
 }
@@ -1036,6 +1052,7 @@ drm_output_update_msc(struct drm_output *output, unsigned int seq)
 	output->base.msc = (msc_hi << 32) + seq;
 }
 
+#if ENABLE_PAGEFLIP
 static void
 pageflip_handler(unsigned int frame, unsigned int sec, unsigned int usec, void *data)
 {
@@ -1048,6 +1065,12 @@ pageflip_handler(unsigned int frame, unsigned int sec, unsigned int usec, void *
 
 	write(output->pageflip_ev_fd, &v, sizeof v);
 }
+#else
+static void
+pageflip_handler(unsigned int frame, unsigned int sec, unsigned int usec, void *data)
+{
+}
+#endif
 
 static int
 drm_output_enable_pageflip(struct drm_output *output)
@@ -1504,7 +1527,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 			continue;
 		}
 
-		is_skip = true;
+		is_skip = is_skip_view(ev, output);
 
 		sdm_layer = create_sdm_layer(output, pnode, &above_opaque, is_cursor, is_skip);
 		if (sdm_layer == NULL) {
@@ -1692,7 +1715,9 @@ drm_output_destroy(struct weston_output *output_base)
 
 	drm_mode_list_destroy(b, &output->base.mode_list);
 
+#if ENABLE_PAGEFLIP
 	drm_output_disable_pageflip(output);
+#endif
 
 	weston_output_release(&output->base);
 
@@ -2912,10 +2937,12 @@ drm_output_create(struct weston_backend *backend, const char *name)
 
 	weston_compositor_add_pending_output(&output->base, b->compositor);
 
+#if ENABLE_PAGEFLIP
 	if (0 > drm_output_enable_pageflip(output)) {
 		weston_log("Failed to create pageflip event\n");
 		return NULL;
 	}
+#endif
 
 	return &output->base;
 }

@@ -14,6 +14,10 @@ project('weston-extension',
 libweston_major = 13
 version_weston_extension = meson.project_version()
 
+if get_option('ASAN')
+add_project_arguments('-fsanitize=address', language: 'c')
+endif
+
 dir_prefix = get_option('prefix')
 dir_lib = join_paths(dir_prefix, get_option('libdir'))
 dir_module_weston = join_paths(dir_lib, 'weston')

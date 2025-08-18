@@ -93,6 +93,9 @@ if get_option('enable-rt_schedule')
 	deps_drm += cc.find_library('compresmgr_client')
 endif
 
+if get_option('enable-pageflip')
+	config_h.set('ENABLE_PAGEFLIP', '1')
+endif
 
 plugin_drm = shared_library(
 	'drm-backend',
