@@ -25,8 +25,8 @@
 * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
 *
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -50,12 +50,6 @@ extern "C" {
 }
 #endif
 
-/*SDM display_id is the connector id in SDM 1.0, in SDM 2.0,
- *the display_id include card_id and connector_id, so add
- *DRM_CONNECTOR_MASK to indicate real drm connector id bits.
- */
-#define DRM_CONNECTOR_MASK 0x00000FFF
-#define SDM_CARD_BIT(x) ((x) << 24)
 
 #ifndef DRM_FORMAT_MOD_QCOM_COMPRESSED
 #define DRM_FORMAT_MOD_QCOM_COMPRESSED fourcc_mod_code(QCOM, 1)
@@ -119,19 +113,9 @@ struct early_display {
 };
 extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
 
-static int card_id_ = 0;
-
 int early_get_drm_master() {
   DRMMaster *master = nullptr;
-  char* card_str = nullptr;
-
-  card_str = getenv("SDM_BACKEND_CARDID");
-  if (card_str)
-    card_id_ = strtoul(card_str, NULL, 10);
-  else
-    weston_log("not set env SDM_BACKEND_CARDID\n");
-
-  DRMMaster::GetInstance(&master, card_id_);
+  DRMMaster::GetInstance(&master);
 
   if(!master) {
     weston_log("Failed to get DRMMaster instance\n");
@@ -183,8 +167,7 @@ int early_drm_get_planes() {
 int early_drm_display_init(int drm_fd) {
   int ret = -1;
 
-  DRMLibLoader *drm_lib_loader = DRMLibLoader::GetInstance(card_id_);
-
+  DRMLibLoader *drm_lib_loader = DRMLibLoader::GetInstance();
   if (drm_lib_loader == NULL) {
     weston_log("drmlib instance fail\n");
     return -1;
@@ -216,12 +199,6 @@ uint32_t early_get_connector_id(uint32_t display_id) {
   return display_id_connid[display_id];
 }
 
-uint32_t early_get_drm_connector_id(uint32_t display_id) {
-  if (display_id >= DISPMax)
-    return -1;
-  return (display_id_connid[display_id] & DRM_CONNECTOR_MASK);
-}
-
 int early_get_connector_count(uint32_t *count) {
   int i = 0;
   int32_t conn_id;
@@ -247,7 +224,7 @@ int early_get_connector_count(uint32_t *count) {
     is_connected = iter.second.is_connected ? 1 : 0;
     if (!is_connected)
       continue;
-    display_id_connid[i] = iter.first | SDM_CARD_BIT(1 << card_id_);
+    display_id_connid[i] = iter.first;
     i++;
     /* only have one primary display*/
     break;
@@ -265,7 +242,7 @@ int early_get_connector_count(uint32_t *count) {
       continue;
     switch (iter.second.type) {
       case DRM_MODE_CONNECTOR_DSI:
-        display_id_connid[i] = iter.first | SDM_CARD_BIT(1 << card_id_);
+        display_id_connid[i] = iter.first;
         i++;
       default:
         continue;
@@ -288,7 +265,7 @@ int early_get_connector_count(uint32_t *count) {
       case DRM_MODE_CONNECTOR_HDMIB:
       case DRM_MODE_CONNECTOR_DisplayPort:
       case DRM_MODE_CONNECTOR_VGA:
-        display_id_connid[i] = iter.first | SDM_CARD_BIT(1 << card_id_);
+        display_id_connid[i] = iter.first;
         i++;
         break;
       default:
@@ -318,7 +295,7 @@ int early_create_display(uint32_t display_id, struct EarlyDisplayInfo *dispinfo)
   if (!drm_mgr_intf_)
     return -1;
 
-  conn_id = early_get_drm_connector_id(display_id);
+  conn_id = early_get_connector_id(display_id);
   if (conn_id < 0)
     return -1;
 
@@ -343,7 +320,7 @@ int early_create_display(uint32_t display_id, struct EarlyDisplayInfo *dispinfo)
       return -1;
   }
 
-  snprintf(name, sizeof name, "%s-%d", type_name, conn_id);
+  snprintf(name, sizeof name, "%s-%d", type_name, info.type_id);
 
   dispinfo->name = strdup(name);
   dispinfo->x_pixels = current_mode_.hdisplay;
@@ -362,7 +339,7 @@ int early_create_display(uint32_t display_id, struct EarlyDisplayInfo *dispinfo)
    */
   ret = drm_mgr_intf_->RegisterDisplay(conn_id, &token_);
   if (ret) {
-    weston_log("RegisterDisplay failed, connector %d\n", conn_id);
+    weston_log("RegisterDisplay failed");
     dispinfo->early_enable = false;
     goto err_register;
   }
@@ -452,7 +429,7 @@ static int early_get_drm_fb_id(int drm_fd, struct gbm_bo *bo, uint32_t *fb_id) {
   }
 
   DRMMaster *master = nullptr;
-  DRMMaster::GetInstance(&master, card_id_);
+  DRMMaster::GetInstance(&master);
 
   if(!master) {
     weston_log("Failed to get DRMMaster instance\n");
@@ -477,7 +454,7 @@ static void early_layer_destroy_callback(struct gbm_bo *bo, void *data) {
 
   if (layer->fb_id) {
     DRMMaster *master = nullptr;
-    DRMMaster::GetInstance(&master, card_id_);
+    DRMMaster::GetInstance(&master);
 
     if(!master) {
       weston_log("Failed to get DRMMaster instance\n");
@@ -799,12 +776,12 @@ void early_destroy_display(void *early_display_intf) {
   free(early_disp);
 }
 
-void early_drm_display_deinit(bool destroy, int drm_fd) {
+void early_drm_display_deinit(bool destroy) {
   /* DRM Manager is not destroied if sdm is still using it */
   if (destroy) {
-    DRMLibLoader *drm_lib_loader = DRMLibLoader::GetInstance(card_id_);
+    DRMLibLoader *drm_lib_loader = DRMLibLoader::GetInstance();
     if (drm_lib_loader && drm_lib_loader->FuncDestroyDRMManager())
-      drm_lib_loader->FuncDestroyDRMManager()(drm_fd);
+      drm_lib_loader->FuncDestroyDRMManager()();
   }
   drm_mgr_intf_ = nullptr;
   plane_list.clear();

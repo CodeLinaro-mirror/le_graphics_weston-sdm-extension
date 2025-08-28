@@ -25,15 +25,10 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
-* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef __SDM_DISPLAY_BUFFER_SYNC_HANDLER_H__
 #define __SDM_DISPLAY_BUFFER_SYNC_HANDLER_H__
-#include "config.h"
 #include <core/buffer_sync_handler.h>
 
 namespace sdm {
@@ -41,10 +36,9 @@ namespace sdm {
 class SdmDisplayBufferSyncHandler : public BufferSyncHandler {
 public:
   SdmDisplayBufferSyncHandler();
-  int SyncWait(int fd, int timeout);
-  int SyncMerge(int fd1, int fd2, int *merged_fd);
-  void GetSyncInfo(int fd, std::ostringstream *os) {}
-  uint64_t GetSignalTime(int fd) {}
+
+  DisplayError SyncWait(int fd);
+  DisplayError SyncMerge(int fd1, int fd2, int *merged_fd);
   bool IsSyncSignaled(int fd);
 };
 

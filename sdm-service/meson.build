@@ -10,7 +10,6 @@ srcs_sdm = [
 	'sdm_display_buffer_sync_handler.cpp',
 	'sdm_display_socket_handler.cpp',
 	'sdm_display_connect.cpp',
-	'sdm_layer.cpp',
 	'uevent.c',
 	linux_dmabuf_unstable_v1_server_protocol_h,
 ]

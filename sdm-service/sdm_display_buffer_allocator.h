@@ -25,16 +25,11 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
-* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #ifndef __SDM_DISPLAY_BUFFER_ALLOCATOR_H__
 #define __SDM_DISPLAY_BUFFER_ALLOCATOR_H__
 
-#include "config.h"
 #include <unistd.h>
 #include <core/buffer_allocator.h>
 #include <gbm.h>
@@ -56,23 +51,16 @@ public:
     gbm_ = NULL;
   };
 
-  int AllocateBuffer(BufferInfo *buffer_info);
-  int FreeBuffer(BufferInfo *buffer_info);
+  DisplayError AllocateBuffer(BufferInfo *buffer_info);
+  DisplayError FreeBuffer(BufferInfo *buffer_info);
+  uint32_t GetBufferSize(BufferInfo *buffer_info);
 
-  int GetAllocatedBufferInfo(const BufferConfig &buffer_config,
+  DisplayError GetAllocatedBufferInfo(const BufferConfig &buffer_config,
                                       AllocatedBufferInfo *allocated_buffer_info);
-  int SetBufferInfo(LayerBufferFormat format, int *target, uint64_t *flags);
-  int GetBufferLayout(const AllocatedBufferInfo &buf_info,
+  int SetBufferInfo(LayerBufferFormat format, uint32_t *target, uint64_t *flags);
+  DisplayError GetBufferLayout(const AllocatedBufferInfo &buf_info,
                                uint32_t stride[4], uint32_t offset[4],
                                uint32_t *num_planes);
-  int GetAlignedWidthAndHeight(int width, int height, int format, uint32_t alloc_type,
-                                        int *aligned_width, int *aligned_height) {};
-  bool GetSDMColorSpace(const int int_dataspace, QtiDataspace *dataspace) {};
-  LayerBufferFormat GetSDMFormat(const int32_t &source, const int32_t flags,
-                                         const int64_t compression_type) {};
-  DisplayError ColorMetadataToDataspace(Dataspace ds, uint32_t *int_dataspace) {};
-  int32_t TranslateFromLegacyDataspace(const int32_t &legacy_ds) {};
-  uint32_t GetBufferSize(BufferInfo *buffer_info);
 private:
   bool IsFormatVideo(uint32_t fmt);
   struct gbm_device *gbm_ = NULL;
