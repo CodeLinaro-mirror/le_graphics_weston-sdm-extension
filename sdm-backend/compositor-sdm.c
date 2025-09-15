@@ -934,14 +934,18 @@ drm_output_repaint(struct weston_output *output_base)
 	weston_output_flush_damage_for_primary_plane(output_base, &damage);
 
 	/* Backend is not full ready, do early repaint. */
-	if (!backend->sdm_repaint)
+	if (!backend->sdm_repaint) {
+		pixman_region32_fini(&damage);
 		return drm_output_repaint_early(output_base);
+	}
 
 	output_repaint(output_base, &damage, false);
 
 	/* Do output repaint for virtual output. */
 	if (screen_capture_c_interface.is_capture_ready(screen_cap, output_base) && screen_cap->next)
 		do_screen_capture(screen_cap, &damage);
+
+	pixman_region32_fini(&damage);
 
 	return 0;
 }
