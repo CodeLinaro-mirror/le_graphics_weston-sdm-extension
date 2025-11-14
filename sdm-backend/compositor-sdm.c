@@ -3896,6 +3896,7 @@ err_launcher:
 	weston_launcher_destroy(compositor->launcher);
 err_base:
 	weston_log_scope_destroy(b->debug);
+	wl_list_remove(&b->base.link);
 	free(b);
 	return NULL;
 }
