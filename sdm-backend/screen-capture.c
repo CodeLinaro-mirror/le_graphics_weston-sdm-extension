@@ -325,10 +325,15 @@ is_screen_capture_buffer(struct weston_buffer *buffer)
 static bool
 is_screen_capture_view(struct weston_view *ev)
 {
+	if (ev == NULL) {
+		SC_PROTOCOL_LOG(SC_LOG_ERR,"input weston_view is NULL!\n");
+		return false;
+	}
+
 	if (ev->is_capture_view)
 		return true;
 
-	if (ev && ev->surface && ev->surface->buffer_ref.buffer) {
+	if (ev->surface && ev->surface->buffer_ref.buffer) {
 		struct gbm_buffer *gbm_buf =
 				gbm_buffer_backend_c_interface.buffer_get(ev->surface->buffer_ref.buffer->resource);
 
