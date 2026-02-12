@@ -2416,10 +2416,8 @@ static int
 finish_frame_handler(void *data)
 {
 	struct drm_output *output = data;
-	struct timespec ts;
 
-	weston_compositor_read_presentation_clock(output->base.compositor, &ts);
-	weston_output_finish_frame(&output->base, &ts, 0);
+	weston_output_finish_frame(&output->base, NULL, WP_PRESENTATION_FEEDBACK_INVALID);
 
 	return 1;
 }
