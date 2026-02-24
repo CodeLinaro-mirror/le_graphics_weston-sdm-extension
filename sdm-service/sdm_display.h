@@ -125,6 +125,7 @@ public:
   virtual DisplayError UpdateDisplayPll(int32_t ppm) = 0;
   virtual DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info) = 0;
   virtual SdmDisplayIntfType GetDisplayIntfType() = 0;
+  virtual DisplayError GetDisplayName(std::string *panel_name) = 0;
 
   virtual struct drm_head * GetHead() = 0;
 
@@ -152,6 +153,7 @@ public:
   DisplayError EnablePllUpdate(int32_t enable);
   DisplayError UpdateDisplayPll(int32_t ppm);
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info);
+  DisplayError GetDisplayName(std::string *panel_name) { return kErrorNone; }
 
   struct drm_head * GetHead() { return NULL; };
 };
@@ -179,6 +181,7 @@ public:
   DisplayError UpdateDisplayPll(int32_t ppm);
 
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info);
+  DisplayError GetDisplayName(std::string *panel_name);
 
   struct drm_head * GetHead() { return drm_head_; };
   struct drm_output * GetOutput() { return drm_output_; };
@@ -307,6 +310,10 @@ public:
   }
   DisplayError GetHdrInfo(struct DisplayHdrInfo *display_hdr_info) {
     return display_intf_->GetHdrInfo(display_hdr_info);
+  }
+
+  DisplayError GetDisplayName(std::string *panel_name) {
+    return display_intf_->GetDisplayName(panel_name);
   }
 
   DisplayError HandleHotplug(bool connected);
