@@ -273,8 +273,15 @@ int GetNewPlugDisplayID(int idx)
 
 char *GetConnectorName(uint32_t display_id) {
   char name[100]={};
+  std::string panel_name;
   const char *type_name = NULL;
   auto iter = sdm_displays_info_.find(display_id);
+
+  DisplayError error = display_[display_id]->GetDisplayName(&panel_name);
+
+  if (error == kErrorNone && !panel_name.empty()) {
+    return strdup(panel_name.c_str());
+  }
 
   switch(iter->second.display_type) {
     case kBuiltIn:
