@@ -178,6 +178,9 @@ public:
 
 protected:
   virtual DisplayError VSync(const DisplayEventVSync &vsync);
+  virtual DisplayError PFlip(int fd, unsigned int sequence,
+                            unsigned int tv_sec, unsigned int tv_usec,
+                            void *data);
   virtual DisplayError CECMessage(char *message);
   virtual DisplayError HandleEvent(DisplayEvent event);
   virtual DisplayError Refresh();
