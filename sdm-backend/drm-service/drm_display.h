@@ -25,9 +25,14 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
 #include <stdint.h>
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -95,7 +100,7 @@ void early_drm_destroy_displays(void);
 /* Early display deinitialization,DRM Manager is not destroied if sdm is still using it
  * [input]: destroy
  */
-void early_drm_display_deinit(bool destroy);
+void early_drm_display_deinit(bool destroy, int drm_fd);
 
 /*
  * destroy early displays
@@ -114,6 +119,12 @@ void early_unregister_display(void *early_display_intf);
  * [output]: connector id
  */
 uint32_t early_get_connector_id(uint32_t display_id);
+
+/* Get drm connector id
+ * [input]: display id
+ * [output]: drm connector id
+ */
+uint32_t early_get_drm_connector_id(uint32_t display_id);
 
 #ifdef __cplusplus
 }

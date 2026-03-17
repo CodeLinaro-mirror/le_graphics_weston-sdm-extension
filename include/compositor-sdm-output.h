@@ -51,11 +51,13 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  *
- * Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Changes from Qualcomm Technologies, Inc. are provided under the following license:
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
-#include "config.h"
+#ifndef __COMPOSITOR_SDM_OUTPUT_H__
+#define __COMPOSITOR_SDM_OUTPUT_H__
+#include <config.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -310,3 +312,4 @@ struct drm_output {
   // Indicate previous frame whether commit layers or not, record previous layer_none_commit
   bool prev_layer_none_commit;
 };
+#endif //__COMPOSITOR_SDM_OUTPUT_H__

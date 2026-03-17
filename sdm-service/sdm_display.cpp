@@ -51,8 +51,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  *
- * Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Changes from Qualcomm Technologies, Inc. are provided under the following license:
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include <assert.h>
@@ -76,6 +76,7 @@
 #include <sys/resource.h>
 #include "sdm_display.h"
 #include "uevent.h"
+#include "sdm_layer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -91,6 +92,10 @@ namespace sdm {
 
 #define SDM_DISPLAY_DEBUG 0
 #define SDM_DISPLAY_DUMP_LAYER_STACK 0
+#define MULTI_THREAD 0
+/* alpha was expand to 16 bits */
+#define MAX_ALPHA 0xFFFF
+
 extern struct gbm_buffer_backend_c_interface gbm_buffer_backend_c_interface;
 
 enum {
@@ -108,6 +113,7 @@ Layer *SdmLayerManager::get_layer(struct sdm_layer *sdm_layer)
     layer = new SdmLayer;
     layer->layer_manager_ = this;
     layer->destroy_listener_.notify = destroy;
+    layer->layer_.layer_id = wl_resource_get_id(sdm_layer->view->surface->resource);
     layer_cache_.emplace(sdm_layer->view, layer);
     wl_signal_add(&sdm_layer->view->destroy_signal, &layer->destroy_listener_);
   } else {
@@ -174,7 +180,7 @@ int SdmDisplayInterface::GetDrmMasterFd() {
   return fd;
 }
 
-SdmDisplay::SdmDisplay(int32_t display_id, DisplayType type, CoreInterface *core_intf) {
+SdmDisplay::SdmDisplay(int32_t display_id, SDMDisplayType type, CoreInterface *core_intf) {
   display_id_ = display_id;
   display_type_ = type;
   core_intf_    = core_intf;
@@ -218,6 +224,13 @@ DisplayError SdmDisplay::CreateDisplay() {
   } else {
     DLOGI("Display Device doesn't support HDR functionality");
   }
+
+#if MULTI_THREAD
+  /*enable multi thread display commit
+   *it can only be enabled if SDM_VERSION >= 2.0
+   */
+  display_intf_->SetDrawMethod(kDrawUnified);
+#endif
 
   return kErrorNone;
 }
@@ -429,7 +442,8 @@ DisplayError SdmDisplay::PopulateLayerGeometryOnToLayerStack(struct drm_output *
   layer_buffer->flags.hdr = layer_geometry->flags.hdr_present;
 
   if (NeedUpdateColorMetaData(layer_geometry)) {
-    layer_buffer->color_metadata = layer_geometry->color_metadata;
+    layer_buffer->dataspace = layer_geometry->dataspace;
+    layer_buffer->matrixCoefficients = layer_geometry->matrixCoefficients;
   }
 
   layer_buffer->flags.macro_tile = false;
@@ -580,7 +594,7 @@ int SdmDisplay::PrepareFbLayerGeometry(struct drm_output *output,
    * keep no transform for output.
    */
   fb_layer->transform = SDM_TRANSFORM_NORMAL;
-  fb_layer->plane_alpha = 0xFF;
+  fb_layer->plane_alpha = MAX_ALPHA;
 
   fb_layer->flags.skip = 0;
   fb_layer->flags.is_cursor = 0;
@@ -595,53 +609,6 @@ int SdmDisplay::PrepareFbLayerGeometry(struct drm_output *output,
   }
 
   return 0;
-}
-
-static bool SetCSC(int32_t color_space, ColorMetaData *color_metadata) {
-  bool csc_updated = false;
-  /*
-   * As any GBM color space definition can't be 0, if color_space is still 0
-   * here, which means nobody touched color space or meta data info before, so
-   * we should skip the following update.
-   */
-  if (!color_metadata || !color_space)
-    return csc_updated;
-
-  /*
-   * A tricky design in gbm is, the color space will be updated according to
-   * the color_primaries and range setting in meta data info if
-   * GBM_METADATA_SET_COLOR_METADATA was ever called before while calling
-   * GBM_METADATA_GET_COLOR_SPACE. In this case, we just update those two fields
-   * of meta data.
-   */
-  if (color_space == GBM_METADATA_COLOR_SPACE_ITU_R_601_FR ||
-      color_space == GBM_METADATA_COLOR_SPACE_ITU_R_2020_FR)
-    color_metadata->range = Range_Full;
-
-  switch (color_space) {
-    case GBM_METADATA_COLOR_SPACE_ITU_R_601:
-    case GBM_METADATA_COLOR_SPACE_ITU_R_601_FR:
-      color_metadata->colorPrimaries = ColorPrimaries_BT601_6_625;
-      color_metadata->matrixCoefficients = MatrixCoEff_BT601_6_625;
-      csc_updated = true;
-      break;
-    case GBM_METADATA_COLOR_SPACE_ITU_R_709:
-      color_metadata->colorPrimaries = ColorPrimaries_BT709_5;
-      color_metadata->matrixCoefficients = MatrixCoEff_BT709_5;
-      csc_updated = true;
-      break;
-    case GBM_METADATA_COLOR_SPACE_ITU_R_2020:
-    case GBM_METADATA_COLOR_SPACE_ITU_R_2020_FR:
-      color_metadata->colorPrimaries = ColorPrimaries_BT2020;
-      color_metadata->matrixCoefficients = MatrixCoEff_BT2020;
-      csc_updated = true;
-      break;
-    default:
-      DLOGE("unsupported CSC: %d", color_space);
-      break;
-  }
-
-  return csc_updated;
 }
 
 int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
@@ -752,14 +719,17 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
       uint32_t ubwc_status = 0;
       int32_t color_space = 0;
       bool metadata_present = false;
-      void *prm = reinterpret_cast<void *> (&layer->color_metadata);
+      struct ColorMetaData tmp;
+      void *prm = &tmp;
 
       gbm_perform(GBM_PERFORM_GET_BO_ALIGNED_WIDTH, bo, &alignedWidth);
       gbm_perform(GBM_PERFORM_GET_BO_ALIGNED_HEIGHT, bo, &alignedHeight);
       gbm_perform(GBM_PERFORM_GET_SECURE_BUFFER_STATUS, bo, &secure_status);
       ret = gbm_perform(GBM_PERFORM_GET_METADATA, bo, GBM_METADATA_GET_COLOR_METADATA, prm);
-      if (ret == GBM_ERROR_NONE)
+      if (ret == GBM_ERROR_NONE) {
         metadata_present = true;
+        CovertColorMetaToDataSpace(&tmp, &layer->dataspace, &layer->matrixCoefficients);
+      }
       /* Only query color space info when color meta data never be set before */
       if (!metadata_present) {
         gbm_perform(GBM_PERFORM_GET_METADATA, bo, GBM_METADATA_GET_COLOR_SPACE, &color_space);
@@ -783,12 +753,12 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
 
       /* Update metadata info according to color space setting in gbm */
       if (!metadata_present)
-        metadata_present = SetCSC(color_space, &layer->color_metadata);
+        metadata_present = SetCSC(color_space, &layer->dataspace, &layer->matrixCoefficients);
       layer->flags.metadata_present = metadata_present;
 
-      bool hdr_layer = layer->color_metadata.colorPrimaries == ColorPrimaries_BT2020 &&
-                       (layer->color_metadata.transfer == Transfer_SMPTE_ST2084 ||
-                       layer->color_metadata.transfer == Transfer_HLG);
+      bool hdr_layer = layer->dataspace.colorPrimaries == ColorPrimaries_BT2020 &&
+                       (layer->dataspace.transfer == QtiTransfer_SMPTE_ST2084 ||
+                       layer->dataspace.transfer == QtiTransfer_HLG);
 
       // Set to true if incoming layer has HDR support and Display supports HDR functionality
       layer->flags.hdr_present = hdr_layer && hdr_supported_;
@@ -828,7 +798,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
   pixman_region32_subtract(&r, &r, &ev->surface->opaque);
 
   if ((!pixman_region32_not_empty(&r) || layer->flags.video_present)
-      && (layer->plane_alpha == 0xFF))
+      && (layer->plane_alpha == MAX_ALPHA))
     layer->blending = SDM_BLENDING_NONE;
   else
     layer->blending = SDM_BLENDING_PREMULTIPLIED;
@@ -1013,14 +983,9 @@ DisplayError SdmDisplay::PostCommit(int *retire_fence_fd) {
     Layer *layer = layer_stack_.layers.at(i);
     LayerBuffer *layer_buffer = &layer->input_buffer;
 
-    if (layer_buffer->release_fence_fd > 0) {
-      close(layer_buffer->release_fence_fd);
-      layer_buffer->release_fence_fd = -1;
-    }
   }
 
-  *retire_fence_fd = layer_stack_.retire_fence_fd;
-  layer_stack_.retire_fence_fd = -1;
+  *retire_fence_fd = Fence::Dup(layer_stack_.retire_fence);
 
   return error;
 }
@@ -1447,13 +1412,13 @@ int SdmDisplay::ComputeDirtyRegion(struct weston_view *ev,
   return 0;
 }
 
-uint8_t SdmDisplay::GetGlobalAlpha(struct weston_view *ev) {
+uint16_t SdmDisplay::GetGlobalAlpha(struct weston_view *ev) {
   if (ev->alpha > 1.0f)
-    return 0xFF;
+    return MAX_ALPHA;
   else if (ev->alpha < 0.0f)
     return 0;
   else
-    return (uint8_t)(0xFF * ev->alpha);
+    return (uint16_t)(MAX_ALPHA * ev->alpha);
 }
 
 int SdmDisplay::GetVisibleRegion(struct drm_output *output, struct weston_view *ev,
@@ -1552,7 +1517,7 @@ DisplayError SdmDisplay::GetHdrInfo(struct DisplayHdrInfo *display_hdr_info) {
   return error;
 }
 
-SdmNullDisplay::SdmNullDisplay(int32_t display_id, DisplayType type, CoreInterface *core_intf) {
+SdmNullDisplay::SdmNullDisplay(int32_t display_id, SDMDisplayType type, CoreInterface *core_intf) {
 }
 
 SdmNullDisplay::~SdmNullDisplay() {
@@ -1597,7 +1562,7 @@ DisplayError SdmNullDisplay::GetHdrInfo(struct DisplayHdrInfo *display_hdr_info)
   return kErrorNone;
 }
 
-SdmDisplayProxy::SdmDisplayProxy(int32_t display_id, DisplayType type, CoreInterface *core_intf)
+SdmDisplayProxy::SdmDisplayProxy(int32_t display_id, SDMDisplayType type, CoreInterface *core_intf)
   : display_id_(display_id), disp_type_(type), core_intf_(core_intf),
   sdm_disp_(display_id, type, core_intf), null_disp_(display_id, type, core_intf) {
   display_intf_ = &sdm_disp_;

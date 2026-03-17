@@ -26,8 +26,8 @@
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -37,15 +37,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <color_metadata.h>
-
-#define MAX_SDE_Layers          16
-#define MAX_PIPE_WIDTH          2560
-#define MAX_MIXER_WIDTH         2560
 
 struct drm_output;
 
-/* Buffer format enum */
 enum {
   SDM_BUFFER_FORMAT_ARGB_8888,
   SDM_BUFFER_FORMAT_ABGR_8888,
@@ -139,36 +133,6 @@ struct LayerGeometryFlags {
   uint32_t secure_present: 1;
   uint32_t hdr_present: 1;
   uint32_t metadata_present: 1;
-};
-
-
-/* Layer geometry information filled by compositor */
-/* TODO: Check if LayerGeometry from sdm layer could be re-used  */
-struct LayerGeometry {
-  /* Buffer information */
-  uint32_t               width;
-  uint32_t               height;
-  uint32_t               unaligned_width;
-  uint32_t               unaligned_height;
-  uint32_t               format;
-  uint32_t               fb_id;
-  uint32_t               handle_id;
-  int32_t                ion_fd;
-  /* Layer information */
-  uint32_t               composition; /*GPU, Overlay, HWCursor*/
-  struct Rect            src_rect; /* srouce rectangle */
-  struct Rect            dst_rect; /* destination rectangle */
-  struct RectArray       visible_regions;
-  struct RectArray       dirty_regions;
-  uint32_t               blending;
-  uint32_t               transform;
-  uint8_t                plane_alpha; /* global alpha */
-  struct LayerGeometryFlags        flags;
-  ColorMetaData color_metadata;
-
-  /*Hook for storing information relative to compositor. DO NOT MODIFY IT!!!*/
-  const void *usr_data;
-  int acquire_fence_fd;
 };
 
 /* Scaling property */

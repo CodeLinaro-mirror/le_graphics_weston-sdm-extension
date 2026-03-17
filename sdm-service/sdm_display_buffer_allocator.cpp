@@ -25,6 +25,11 @@
 * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
+
 */
 
 #include "sdm_display_debugger.h"
@@ -110,12 +115,12 @@ LayerBufferFormat GetLayerBufferFormat(uint32_t format) {
   return layer_buffer_format;
 }
 
-DisplayError SdmDisplayBufferAllocator::AllocateBuffer(BufferInfo *buffer_info) {
+int SdmDisplayBufferAllocator::AllocateBuffer(BufferInfo *buffer_info) {
   const BufferConfig &buffer_config = buffer_info->buffer_config;
   AllocatedBufferInfo *alloc_buffer_info = &buffer_info->alloc_buffer_info;
   uint32_t width = buffer_config.width;
   uint32_t height = buffer_config.height;
-  uint32_t format;
+  int format;
   int metadata_fd = -1;
   uint64_t alloc_flags = 0;
   int error = SetBufferInfo(buffer_config.format, &format, &alloc_flags);
@@ -153,7 +158,7 @@ DisplayError SdmDisplayBufferAllocator::AllocateBuffer(BufferInfo *buffer_info) 
   return kErrorNone;
 }
 
-DisplayError SdmDisplayBufferAllocator::FreeBuffer(BufferInfo *buffer_info) {
+int SdmDisplayBufferAllocator::FreeBuffer(BufferInfo *buffer_info) {
   DisplayError err = kErrorNone;
   struct gbm_bo *bo = reinterpret_cast<struct gbm_bo *>(buffer_info->private_data);
   if (bo)
@@ -184,7 +189,7 @@ uint32_t SdmDisplayBufferAllocator::GetBufferSize(BufferInfo *buffer_info) {
   uint32_t size = 0;
   const BufferConfig &bufferConfig = buffer_info->buffer_config;
   uint64_t usageFlags = 0;
-  uint32_t gbmFormat = 0;
+  int gbmFormat = 0;
   struct gbm_buf_info bufInfo;
 
   if (SetBufferInfo(bufferConfig.format, &gbmFormat, &usageFlags) < 0) {
@@ -205,7 +210,7 @@ uint32_t SdmDisplayBufferAllocator::GetBufferSize(BufferInfo *buffer_info) {
 }
 
 int SdmDisplayBufferAllocator::SetBufferInfo(LayerBufferFormat format, 
-                                             uint32_t *target, uint64_t *flags) {
+                                             int *target, uint64_t *flags) {
   switch (format) {
   case kFormatRGBA8888:
     *target = GBM_FORMAT_ABGR8888;
@@ -291,12 +296,12 @@ int SdmDisplayBufferAllocator::SetBufferInfo(LayerBufferFormat format,
   return 0;
 }
 
-DisplayError SdmDisplayBufferAllocator::GetAllocatedBufferInfo(
+int SdmDisplayBufferAllocator::GetAllocatedBufferInfo(
                                         const BufferConfig &buffer_config,
                                         AllocatedBufferInfo *allocated_buffer_info) {
   /* This API does not fill or provide stride to the caller in AllocatedBufferInfo structure */
   uint64_t usageFlags = 0;
-  uint32_t gbmFormat = 0;
+  int gbmFormat = 0;
   struct gbm_buf_info bufInfo;
   uint32_t alignedWidth = 0;
   uint32_t alignedHeight = 0;
@@ -343,12 +348,12 @@ bool SdmDisplayBufferAllocator::IsFormatVideo(uint32_t fmt) {
   return is_video_present;
 }
 
-DisplayError SdmDisplayBufferAllocator::GetBufferLayout(const AllocatedBufferInfo &buf_info,
+int SdmDisplayBufferAllocator::GetBufferLayout(const AllocatedBufferInfo &buf_info,
                                                         uint32_t stride[4], uint32_t offset[4],
                                                         uint32_t *num_planes) {
   struct gbm_bo *bo;
   struct gbm_import_fd_data import_fd_data;
-  uint32_t format = GBM_FORMAT_ARGB8888;
+  int format = GBM_FORMAT_ARGB8888;
   uint64_t flags = 0;
   generic_buf_layout_t buf_layout;
   *num_planes = 1;
