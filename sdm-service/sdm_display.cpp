@@ -103,6 +103,23 @@ enum {
   ORIGIN_BOTTOM_LEFT, /* buffer content starts at (0, height) */
 } buffer_origin;
 
+uint64_t SdmLayerManager::generate_layer_id()
+{
+  uint64_t new_id = 0;
+
+  do {
+    auto it = layer_id_cache_.find(layer_id_seed);
+    if (it == layer_id_cache_.end()) {
+      layer_id_cache_[layer_id_seed] = layer_id_seed;
+      new_id = layer_id_seed++;
+      break;
+    }
+    layer_id_seed++;
+  } while (true);
+
+  return new_id;
+}
+
 Layer *SdmLayerManager::get_layer(struct sdm_layer *sdm_layer)
 {
   std::lock_guard<std::mutex> lock(lock_);
@@ -113,7 +130,7 @@ Layer *SdmLayerManager::get_layer(struct sdm_layer *sdm_layer)
     layer = new SdmLayer;
     layer->layer_manager_ = this;
     layer->destroy_listener_.notify = destroy;
-    layer->layer_.layer_id = wl_resource_get_id(sdm_layer->view->surface->resource);
+    layer->layer_.layer_id = generate_layer_id();
     layer_cache_.emplace(sdm_layer->view, layer);
     wl_signal_add(&sdm_layer->view->destroy_signal, &layer->destroy_listener_);
   } else {
@@ -130,6 +147,7 @@ void SdmLayerManager::destroy(struct wl_listener *listener, void *data)
   struct weston_view *view = reinterpret_cast<struct weston_view*>(data);
 
   std::lock_guard<std::mutex> lock(layer->layer_manager_->lock_);
+  layer->layer_manager_->layer_id_cache_.erase(layer->layer_.layer_id);
   layer->layer_manager_->layer_cache_.erase(view);
   wl_list_remove(&layer->destroy_listener_.link);
 
