@@ -1002,7 +1002,13 @@ DisplayError SdmDisplay::Commit(struct drm_output *output) {
 
   uint32_t layer_count = layer_stack_.layers.size();
 
-  uint32_t GPUTarget_index = layer_count-1;
+  uint32_t GPUTarget_index = layer_count - 1;
+  for (uint32_t i = 0; i < layer_count; i++) {
+    if (layer_stack_.layers.at(i)->composition == sdm::kCompositionGPUTarget) {
+      GPUTarget_index = i;
+      break;
+    }
+  }
   Layer *GpuTargetlayer;
 
   GpuTargetlayer = layer_stack_.layers.at(GPUTarget_index);
