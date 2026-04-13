@@ -226,66 +226,40 @@ static struct drm_fb *
 drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 {
 	struct drm_fb *fb;
-	int ret;
-
-	struct drm_mode_create_dumb create_arg;
-	struct drm_mode_destroy_dumb destroy_arg;
-	struct drm_mode_map_dumb map_arg;
-	struct drm_prime_handle prime_arg;
+	struct gbm_bo *bo;
+	void *map_data = NULL;
 
 	fb = zalloc(sizeof *fb);
 	if (!fb)
 		return NULL;
 	fb->refcnt = 1;
 
-	memset(&create_arg, 0, sizeof create_arg);
-	create_arg.bpp = 32;
-	create_arg.width = width;
-	create_arg.height = height;
-
-	ret = drmIoctl(b->drm.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_arg);
-	if (ret)
+	bo = gbm_bo_create(b->gbm, width, height, b->format->format, GBM_BO_USE_SCANOUT);
+	if (!bo)
 		goto err_fb;
 
 	fb->type = BUFFER_PIXMAN_DUMB;
-	fb->handle = create_arg.handle;
-	fb->stride = create_arg.pitch;
-	fb->size = create_arg.size;
+	fb->handle = gbm_bo_get_handle(bo).u32; //create_arg.handle;
+	fb->stride = gbm_bo_get_stride(bo); //create_arg.pitch;
+	gbm_perform(GBM_PERFORM_GET_BO_SIZE, bo, &(fb->size));//create_arg.size;
 	fb->fd = b->drm.fd;
 
-	memset(&prime_arg, 0, sizeof prime_arg);
-	prime_arg.handle = fb->handle;
+	fb->ion_fd = gbm_bo_get_fd(bo);//prime_arg.fd;
+	fb->bo = bo;
 
-	ret = drmIoctl(b->drm.fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime_arg);
-	if (ret)
-	  goto err_bo;
+	weston_log("fb w %d h %d stride %d handle %d drmfd %d\n", width, height, fb->stride, fb->handle, b->drm.fd);
 
-	fb->ion_fd = prime_arg.fd;
-
-	ret = drmModeAddFB(b->drm.fd, width, height, 24, 32,
-			   fb->stride, fb->handle, &fb->fb_id);
-	if (ret)
+	weston_log("fb map\n");
+	fb->map = gbm_bo_map(fb->bo, 0, 0, width, height, GBM_BO_USE_WRITE, &fb->stride, &map_data);
+	if (fb->map == MAP_FAILED)
 		goto err_bo;
 
-	memset(&map_arg, 0, sizeof map_arg);
-	map_arg.handle = fb->handle;
-	ret = drmIoctl(fb->fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
-	if (ret)
-		goto err_add_fb;
-
-	fb->map = mmap(0, fb->size, PROT_WRITE,
-			   MAP_SHARED, b->drm.fd, map_arg.offset);
-	if (fb->map == MAP_FAILED)
-		goto err_add_fb;
-
+	weston_log("fb end\n");
 	return fb;
 
-err_add_fb:
-	drmModeRmFB(b->drm.fd, fb->fb_id);
 err_bo:
-	memset(&destroy_arg, 0, sizeof(destroy_arg));
-	destroy_arg.handle = create_arg.handle;
-	drmIoctl(b->drm.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
+	gbm_bo_destroy(bo);
+	close(fb->ion_fd);
 err_fb:
 	free(fb);
 	return NULL;
@@ -316,7 +290,8 @@ drm_fb_destroy_dumb(struct drm_fb *fb)
 
 	memset(&destroy_arg, 0, sizeof(destroy_arg));
 	destroy_arg.handle = fb->handle;
-	drmIoctl(fb->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
+	gbm_bo_destroy(fb->bo);
+	close(fb->ion_fd);
 
 	free(fb);
 }
