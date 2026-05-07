@@ -77,6 +77,7 @@ typedef std::map<uint32_t, HWDisplayInfo> SdmDisplaysInfo;
 class SdmLayerManager {
 public:
   Layer *get_layer(struct sdm_layer *layer);
+  uint64_t generate_layer_id();
 private:
   struct SdmLayer {
     SdmLayerManager *layer_manager_;
@@ -85,7 +86,9 @@ private:
   };
   static void destroy(struct wl_listener *listener, void *data);
   std::map<struct weston_view*, SdmLayer*> layer_cache_;
+  std::map<uint64_t, uint64_t> layer_id_cache_;
   std::mutex lock_;
+  uint64_t layer_id_seed = 0;
 };
 
 class SdmBufferManager {
