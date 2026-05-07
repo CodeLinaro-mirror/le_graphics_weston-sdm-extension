@@ -11,6 +11,8 @@
 #include <Dataspace.h>
 #include <QtiColorRange.h>
 #include "sdm_display_interface.h"
+#include <utils/fence.h>
+#include <core/sdm_types.h>
 
 namespace sdm {
 using Dataspace = vendor_qti_hardware_display_common_Dataspace;
@@ -48,6 +50,7 @@ struct LayerGeometry {
 
   /*Hook for storing information relative to compositor. DO NOT MODIFY IT!!!*/
   const void *usr_data;
+  shared_ptr<Fence> acquire_fence;
 };
 
 }

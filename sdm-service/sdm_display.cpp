@@ -251,6 +251,12 @@ DisplayError SdmDisplay::VSync(const DisplayEventVSync &vsync) {
   return kErrorNone;
 }
 
+DisplayError SdmDisplay::PFlip(int fd, unsigned int sequence, unsigned int tv_sec,
+                               unsigned int tv_usec, void *data) {
+    DLOGW("Not implemented");
+    return kErrorNone;
+}
+
 DisplayError SdmDisplay::Refresh() {
   if (client_event_handler_) {
     client_event_handler_->Refresh();
@@ -282,11 +288,12 @@ DisplayError SdmDisplay::HandleEvent(DisplayEvent event) {
 
 DisplayError SdmDisplay::SetDisplayState(DisplayState state) {
   DisplayError error;
-  int release_fence = -1;
+  bool teardown = false;
 
-  error = display_intf_->SetDisplayState(state, false /* teardown */, &release_fence);
-  if (release_fence >= 0)
-    close(release_fence);
+  if (state == kStateOff)
+    teardown = true;
+
+  error = display_intf_->SetDisplayState(state, teardown, nullptr);
 
   if (error != kErrorNone) {
     DLOGE("function failed. Error = %d", error);
@@ -451,7 +458,7 @@ DisplayError SdmDisplay::PopulateLayerGeometryOnToLayerStack(struct drm_output *
   layer_buffer->flags.secure_display = false;
   layer_buffer->flags.secure_camera = false;
 
-  layer_buffer->acquire_fence_fd = layer_geometry->acquire_fence_fd;
+  layer_buffer->acquire_fence = layer_geometry->acquire_fence;
   /* 2. Fill layer information */
   if (layer_geometry->composition == SDM_COMPOSITION_FB_TARGET)
     layer->composition = sdm::kCompositionGPUTarget;
@@ -556,8 +563,8 @@ int SdmDisplay::PrepareFbLayerGeometry(struct drm_output *output,
   fb_layer->height = output->base.current_mode->height;
   fb_layer->unaligned_width = output->base.current_mode->width;
   fb_layer->unaligned_height = output->base.current_mode->height;
-  fb_layer->acquire_fence_fd = -1;
 
+  fb_layer->acquire_fence = nullptr;
   fb_layer->format = GetMappedFormatFromGbm(output->format->format);
   fb_layer->composition = SDM_COMPOSITION_FB_TARGET;
 
@@ -640,7 +647,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
   layer->fb_id = -1;
   layer->format = SDM_BUFFER_FORMAT_RGBX_8888;
   layer->transform = SDM_TRANSFORM_NORMAL;
-  layer->acquire_fence_fd = -1;
+  layer->acquire_fence = nullptr;
 
   if (!sdm_layer->is_skip) {
     struct gbm_bo *bo = NULL;
@@ -766,7 +773,7 @@ int SdmDisplay::PrepareNormalLayerGeometry(struct drm_output *output,
 
     /*set input fence*/
     if (es->acquire_fence_fd >= 0) {
-      layer->acquire_fence_fd = es->acquire_fence_fd;
+      layer->acquire_fence = Fence::Create(INT(es->acquire_fence_fd), "acquire");
     }
   }
 
