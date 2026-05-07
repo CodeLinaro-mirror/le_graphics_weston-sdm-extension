@@ -250,7 +250,7 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	create_arg.width = width;
 	create_arg.height = height;
 
-	bo = gbm_bo_create(b->gbm, width, height, b->format, GBM_BO_USE_SCANOUT);
+	bo = gbm_bo_create(b->gbm, width, height, b->format->format, GBM_BO_USE_SCANOUT);
 	if (!bo)
 		goto err_fb;
 
