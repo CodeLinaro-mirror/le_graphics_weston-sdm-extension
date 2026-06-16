@@ -823,7 +823,7 @@ post_repaint(struct drm_output *output, bool is_virtual_output)
 		wl_list_insert_list(&output->commited_layer_list, &output->sdm_layer_list);
 		wl_list_init(&output->sdm_layer_list);
 		if (!is_virtual_output)
-			wl_event_source_timer_update(output->finish_frame_timer, 16);
+			wl_event_source_timer_update(output->finish_frame_timer, 1);
 }
 
 static int
@@ -852,7 +852,7 @@ output_repaint(struct weston_output *output_base,
 	if (output->prev_layer_none_commit && output->layer_none_commit)
 		weston_log("skip commit if two consecutive frames have no layers\n");
 	else if (output->layer_none_commit){
-		sdm_service->Flush(output->display_id);
+		ret = sdm_service->Flush(output->display_id);
 	} else {
 		ret = sdm_service->Commit(output->display_id, output);
 
@@ -2415,10 +2415,8 @@ static int
 finish_frame_handler(void *data)
 {
 	struct drm_output *output = data;
-	struct timespec ts;
 
-	weston_compositor_read_presentation_clock(output->base.compositor, &ts);
-	weston_output_finish_frame(&output->base, &ts, 0);
+	weston_output_repaint_failed(&output->base);
 
 	return 1;
 }

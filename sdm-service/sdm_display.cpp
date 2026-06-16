@@ -395,6 +395,23 @@ DisplayError SdmDisplay::GetDisplayConfiguration(struct DisplayConfigInfo *displ
   return kErrorNone;
 }
 
+DisplayError SdmDisplay::GetDisplayName(std::string *panel_name) {
+  DisplayError error = kErrorNone;
+  PanelFeatureInfo feature_info;
+
+  if (!panel_name) {
+    error = kErrorParameters;
+  }
+
+  if (error!= kErrorParameters) {
+    error = display_intf_->GetPanelFeatureInfo(&feature_info);
+    if (error == kErrorNone) {
+      *panel_name = feature_info.panel_name;
+    }
+  }
+  return error;
+}
+
 DisplayError SdmDisplay::RegisterCb(int display_id, pageflip_cb_t pflipcb) {
   DisplayError error = kErrorNone;
 
