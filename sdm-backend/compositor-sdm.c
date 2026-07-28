@@ -47,8 +47,8 @@
 * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 *
-* Changes from Qualcomm Innovation Center are provided under the following license:
-* Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+* Changes from Qualcomm Technologies, Inc. are provided under the following license:
+* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 * SPDX-License-Identifier: BSD-3-Clause-Clear
 */
 
@@ -250,7 +250,7 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
 	create_arg.width = width;
 	create_arg.height = height;
 
-	bo = gbm_bo_create(b->gbm, width, height, b->format, GBM_BO_USE_SCANOUT);
+	bo = gbm_bo_create(b->gbm, width, height, b->format->format, GBM_BO_USE_SCANOUT);
 	if (!bo)
 		goto err_fb;
 
@@ -1242,6 +1242,9 @@ on_pageflip_vsync(int fd, uint32_t mask, void *data)
 	} else if (!output->frame_pending) {
 		ts.tv_sec = output->last_vblank.sec;
 		ts.tv_nsec = output->last_vblank.usec * 1000;
+
+		/* Cancel fallback timer to avoid racing with weston_output_repaint_failed. */
+		wl_event_source_timer_update(output->finish_frame_timer, 0);
 
 		weston_output_finish_frame(&output->base, &ts, flags);
 
