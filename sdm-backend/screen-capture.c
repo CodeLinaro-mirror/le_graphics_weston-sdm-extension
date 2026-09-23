@@ -60,6 +60,10 @@ screen_capture_create_virtual_display(struct weston_output *mirror_output)
 
 	/* If mirror output can be pluggable in future, update output->base in drm_assign_planes */
 	output->base = *mirror_output;
+
+	/* Re-init list head shallow-copied from mirror_output. */
+	wl_list_init(&output->base.paint_node_z_order_list);
+
 	return output;
 
 err:

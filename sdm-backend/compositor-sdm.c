@@ -1475,12 +1475,22 @@ prepare_virtual_output(struct drm_output *virtual_output, struct weston_output *
 {
 	virtual_output->base = *output_base;
 
+	/* Re-init list heads that were shallow-copied from the real output. */
+	wl_list_init(&virtual_output->base.paint_node_z_order_list);
 	/* clear the list which is established by the original output */
 	wl_list_init(&virtual_output->sdm_layer_list);
 }
 
+/*
+ * node_source: output whose paint_node_z_order_list to traverse.
+ * For a normal output this is output_base itself.  For a virtual (capture)
+ * output pass the real mirror output — the virtual list head is a shallow
+ * copy whose next/prev still point into the real output's chain, so using
+ * it as the sentinel would never terminate.
+ */
 static int
-assign_planes(struct weston_output *output_base, bool is_virtual_output)
+assign_planes(struct weston_output *output_base, bool is_virtual_output,
+	      struct weston_output *node_source)
 {
 	struct drm_backend *b = to_drm_backend(output_base->compositor);
 	struct drm_output *output = (struct drm_output *)output_base;
@@ -1516,7 +1526,7 @@ assign_planes(struct weston_output *output_base, bool is_virtual_output)
 	 * to SDM because format check will fail which may cause SDM can't filter
 	 * correct strategy result. If so, assign those views directly to primary plane.
 	 */
-	wl_list_for_each_safe(pnode, next, &output->base.paint_node_z_order_list, z_order_link) {
+	wl_list_for_each_safe(pnode, next, &node_source->paint_node_z_order_list, z_order_link) {
 		struct weston_view *ev = pnode->view;
 		bool is_cursor = false;
 		bool is_skip = false;
@@ -1663,7 +1673,7 @@ drm_assign_planes(struct weston_output *output_base)
 	}
 
 	/* Do assign planes for normal output */
-	has_GPU_composition = assign_planes(output_base, false);
+	has_GPU_composition = assign_planes(output_base, false, output_base);
 	output_base->need_gpu_composition = has_GPU_composition;
 
 	/*
@@ -1690,7 +1700,7 @@ drm_assign_planes(struct weston_output *output_base)
 			prepare_virtual_output(virtual_output, output_base);
 
 			/* TODO: Update output buffer */
-			screen_cap->fallback_gpu = assign_planes(virtual_output, true);
+			screen_cap->fallback_gpu = assign_planes(virtual_output, true, output_base);
 		} else {
 			screen_cap->fallback_gpu = true;
 		}
