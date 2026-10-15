@@ -49,7 +49,7 @@
 static struct wl_display *connect_to_wayland_display_with_retry(void);
 void emit_touch_event(int fd, int type, int code, int value);
 static void clear_touch_route(struct touch_route *route);
-static void create_surfaces(struct client_state *state);
+static bool create_surfaces(struct client_state *state);
 static void setup_ivi_window_management(struct client_state *state);
 static const struct wl_registry_listener registry_listener;
 
@@ -224,6 +224,25 @@ find_output_for_port(struct client_state *state, PortInfo *port)
 	return out;
 }
 
+static bool
+host_port_is_required(struct client_state *state, PortInfo *host_port)
+{
+	int i;
+
+	if (!state || !host_port || host_port->port_type != PORT_TYPE_HOST)
+		return false;
+
+	for (i = 0; i < state->port_count; i++) {
+		PortInfo *port = &state->ports[i];
+
+		if (port->port_type == PORT_TYPE_SHARED &&
+		    port->host_port == host_port)
+			return true;
+	}
+
+	return false;
+}
+
 PortInfo *
 find_host_port_for_output(struct client_state *state, const char *output_name)
 {
@@ -245,34 +264,74 @@ find_host_port_for_output(struct client_state *state, const char *output_name)
 void
 gtp_resolve_port_geometry(struct client_state *state, PortInfo *port)
 {
-	OutputInfo *out;
+	if (!state || !port)
+		return;
 
 	if (port->width > 0 && port->height > 0)
 		return;
 
-	out = find_output_by_name(state, port->cport_name);
-	if (out) {
-		if (port->width == 0)
-			port->width = out->width;
-		if (port->height == 0)
-			port->height = out->height;
-	}
-
 	if (port->port_type == PORT_TYPE_SHARED && port->host_port) {
-		if (port->width == 0)
+		if (port->host_port->width > 0 && port->host_port->height > 0) {
 			port->width = port->host_port->width;
-		if (port->height == 0)
 			port->height = port->host_port->height;
-		if (port->offset_x == 0)
 			port->offset_x = port->host_port->offset_x;
-		if (port->offset_y == 0)
 			port->offset_y = port->host_port->offset_y;
+			return;
+		}
 	}
 
-	if (port->width == 0)
-		port->width = 1920;
-	if (port->height == 0)
-		port->height = 1080;
+	port->offset_x = 0;
+	port->offset_y = 0;
+	port->width = 0;
+	port->height = 0;
+}
+
+bool
+gtp_resolve_static_port_geometries(struct client_state *state)
+{
+	bool ok = true;
+	int i;
+
+	if (!state)
+		return false;
+
+	/* No Wayland connection exists at this point. Required host geometry
+	 * must come from qcdisplaycfg.xml; wl_output.mode is intentionally not
+	 * consulted so uinput setup cannot depend on Weston startup timing. */
+	for (i = 0; i < state->port_count; i++) {
+		PortInfo *port = &state->ports[i];
+
+		if (port->port_type != PORT_TYPE_HOST)
+			continue;
+		if (!host_port_is_required(state, port))
+			continue;
+
+		if (port->width <= 0 || port->height <= 0) {
+			GTP_LOG_ERROR(state,
+				      GVM_TOUCH_LOG_PREFIX
+				      "Error: host port %s has no valid static geometry in qcdisplaycfg.xml\n",
+				      port->cport_name);
+			ok = false;
+		}
+	}
+
+	for (i = 0; i < state->port_count; i++) {
+		PortInfo *port = &state->ports[i];
+
+		if (port->port_type != PORT_TYPE_SHARED)
+			continue;
+
+		gtp_resolve_port_geometry(state, port);
+		if (port->width <= 0 || port->height <= 0) {
+			GTP_LOG_ERROR(state,
+				      GVM_TOUCH_LOG_PREFIX
+				      "Error: shared port %s has no valid static geometry in shared_touch.ini/qcdisplaycfg.xml\n",
+				      port->cport_name[0] ? port->cport_name : port->output_name);
+			ok = false;
+		}
+	}
+
+	return ok;
 }
 
 const char *
@@ -329,6 +388,60 @@ resolve_xml_config_path(char *path, size_t path_size)
 }
 
 /* --- INI Parser --- */
+static bool
+parse_touch_dimension(const char *value, int maximum, int *dimension)
+{
+	char *end = NULL;
+	long parsed;
+
+	if (!value || !dimension)
+		return false;
+
+	errno = 0;
+	parsed = strtol(value, &end, 10);
+	if (errno == ERANGE || end == value || *end != '\0' ||
+	    parsed <= 0 || parsed > maximum)
+		return false;
+
+	*dimension = (int) parsed;
+	return true;
+}
+
+static bool
+apply_ini_touch_geometry(struct client_state *state, const char *filename,
+			 PortInfo *port, bool got_width, int width,
+			 bool got_height, int height)
+{
+	if (!got_width && !got_height)
+		return true;
+
+	if (!got_width || !got_height) {
+		GTP_LOG_ERROR(state,
+			      GVM_TOUCH_LOG_PREFIX
+			      "Error: %s port %s must configure touch_width and touch_height together\n",
+			      filename, port ? port->output_name : "<unknown>");
+		return false;
+	}
+
+	if (!port) {
+		GTP_LOG_ERROR(state,
+			      GVM_TOUCH_LOG_PREFIX
+			      "Error: %s touch geometry must follow output in [vm_client]\n",
+			      filename);
+		return false;
+	}
+
+	port->offset_x = 0;
+	port->offset_y = 0;
+	port->width = width;
+	port->height = height;
+	GTP_LOG_INFO(state,
+		     GVM_TOUCH_LOG_PREFIX
+		     ">>> INI touch geometry: port=%s width=%d height=%d\n",
+		     port->output_name, width, height);
+	return true;
+}
+
 bool
 gtp_parse_ini_file(const char *filename, struct client_state *state)
 {
@@ -336,7 +449,13 @@ gtp_parse_ini_file(const char *filename, struct client_state *state)
 	char line[MAX_LINE];
 	bool in_host = false;
 	bool in_vm = false;
+	bool ok = true;
 	uint32_t current_vm_id = 0;
+	PortInfo *current_vm_port = NULL;
+	bool got_touch_width = false;
+	bool got_touch_height = false;
+	int touch_width = 0;
+	int touch_height = 0;
 	int line_num = 0;
 
 	if (!fp) {
@@ -359,13 +478,33 @@ gtp_parse_ini_file(const char *filename, struct client_state *state)
 			continue;
 
 		if (strcmp(line, "[host_client]") == 0) {
+			if (in_vm &&
+			    !apply_ini_touch_geometry(state, filename, current_vm_port,
+						      got_touch_width, touch_width,
+						      got_touch_height, touch_height)) {
+				ok = false;
+				break;
+			}
 			in_host = true;
 			in_vm = false;
 			GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX ">>> Enter [host_client] section\n");
 			continue;
 		} else if (strcmp(line, "[vm_client]") == 0) {
+			if (in_vm &&
+			    !apply_ini_touch_geometry(state, filename, current_vm_port,
+						      got_touch_width, touch_width,
+						      got_touch_height, touch_height)) {
+				ok = false;
+				break;
+			}
 			in_host = false;
 			in_vm = true;
+			current_vm_id = 0;
+			current_vm_port = NULL;
+			got_touch_width = false;
+			got_touch_height = false;
+			touch_width = 0;
+			touch_height = 0;
 			GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX ">>> Enter [vm_client] section\n");
 			continue;
 		}
@@ -466,35 +605,75 @@ gtp_parse_ini_file(const char *filename, struct client_state *state)
 				sscanf(value, "%x", &current_vm_id);
 				GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX ">>> VM Client ID: 0x%X\n",
 					     current_vm_id);
-			} else if (strcmp(key, "output") == 0 && current_vm_id != 0) {
-				if (state->port_count < MAX_PORTS) {
-					PortInfo *port = &state->ports[state->port_count];
-					memset(port, 0, sizeof(*port));
-					port->client_id = current_vm_id;
-					snprintf(port->output_name,
-						 sizeof(port->output_name), "%s", value);
-					port->port_type = PORT_TYPE_SHARED;
-					port->uinput_fd = -1;
-					state->port_count++;
-				}
+			} else if (strcmp(key, "output") == 0 &&
+				   current_vm_id != 0 &&
+				   state->port_count < MAX_PORTS) {
+				current_vm_port = &state->ports[state->port_count++];
+				memset(current_vm_port, 0, sizeof(*current_vm_port));
+				current_vm_port->client_id = current_vm_id;
+				snprintf(current_vm_port->output_name,
+					 sizeof(current_vm_port->output_name), "%s", value);
+				current_vm_port->port_type = PORT_TYPE_SHARED;
+				current_vm_port->uinput_fd = -1;
 			} else if (strcmp(key, "ivi_surface_id") == 0 &&
-				   state->port_count > 0) {
-				sscanf(value, "%u",
-				       &state->ports[state->port_count - 1].ivi_surface_id);
+				   current_vm_port) {
+				sscanf(value, "%u", &current_vm_port->ivi_surface_id);
 			} else if (strcmp(key, "ivi_layer_id") == 0 &&
-				   state->port_count > 0) {
-				sscanf(value, "%u",
-				       &state->ports[state->port_count - 1].ivi_layer_id);
+				   current_vm_port) {
+				sscanf(value, "%u", &current_vm_port->ivi_layer_id);
+			} else if (strcmp(key, "touch_width") == 0) {
+				if (!current_vm_port) {
+					GTP_LOG_ERROR(state, GVM_TOUCH_LOG_PREFIX
+						      "Error: %s line %d touch_width must follow output\n",
+						      filename, line_num);
+					ok = false;
+					break;
+				}
+				if (!parse_touch_dimension(value, MAX_PORT_WIDTH,
+							   &touch_width)) {
+					GTP_LOG_ERROR(state,
+						      GVM_TOUCH_LOG_PREFIX
+						      "Error: %s line %d invalid touch_width='%s' (valid range: 1..%d)\n",
+						      filename, line_num, value,
+						      MAX_PORT_WIDTH);
+					ok = false;
+					break;
+				}
+				got_touch_width = true;
+			} else if (strcmp(key, "touch_height") == 0) {
+				if (!current_vm_port) {
+					GTP_LOG_ERROR(state, GVM_TOUCH_LOG_PREFIX
+						      "Error: %s line %d touch_height must follow output\n",
+						      filename, line_num);
+					ok = false;
+					break;
+				}
+				if (!parse_touch_dimension(value, MAX_PORT_HEIGHT,
+							   &touch_height)) {
+					GTP_LOG_ERROR(state,
+						      GVM_TOUCH_LOG_PREFIX
+						      "Error: %s line %d invalid touch_height='%s' (valid range: 1..%d)\n",
+						      filename, line_num, value,
+						      MAX_PORT_HEIGHT);
+					ok = false;
+					break;
+				}
+				got_touch_height = true;
 			}
 		}
 	}
+
+	if (ok && in_vm)
+		ok = apply_ini_touch_geometry(state, filename, current_vm_port,
+					      got_touch_width, touch_width,
+					      got_touch_height, touch_height);
 
 	fclose(fp);
 	GTP_LOG_INFO(state,
 		     GVM_TOUCH_LOG_PREFIX
 		     ">>> INI parse finished: host_id=0x%X port_count=%d current_vm_id=0x%X\n",
 		     state->host_client_id, state->port_count, current_vm_id);
-	return state->port_count > 0;
+	return ok && state->port_count > 0;
 }
 
 /* --- XML Parser --- */
@@ -697,6 +876,29 @@ parse_xml_config(const char *filename, struct client_state *state)
 
 		if (node->type == XML_ELEMENT_NODE &&
 		    strcmp((char *) node->name, "Display") == 0) {
+			xmlChar *device_prop;
+			xmlChar *display_prop;
+			uint32_t display_device_id;
+			uint32_t display_id;
+
+			device_prop = xmlGetProp(node, (xmlChar *) "eQDIDeviceID");
+			display_prop = xmlGetProp(node, (xmlChar *) "ID");
+			if (!device_prop || !display_prop) {
+				if (device_prop)
+					xmlFree(device_prop);
+				if (display_prop)
+					xmlFree(display_prop);
+				continue;
+			}
+
+			display_device_id = (uint32_t) atoi((char *) device_prop);
+			display_id = (uint32_t) atoi((char *) display_prop);
+			xmlFree(device_prop);
+			xmlFree(display_prop);
+
+			/* INI geometry is already non-zero. Fill only unresolved ports so
+			 * DisplayNode wins over the VideoMode fallback without extra source
+			 * state in PortInfo. */
 			for (xmlNode *dn = node->children; dn; dn = dn->next) {
 				if (dn->type != XML_ELEMENT_NODE ||
 				    strcmp((char *) dn->name, "DisplayNode") != 0)
@@ -732,22 +934,29 @@ parse_xml_config(const char *filename, struct client_state *state)
 					offset_y = oy ? atoi((char *) oy) : 0;
 					width = vw ? atoi((char *) vw) : 0;
 					height = vh ? atoi((char *) vh) : 0;
-					/* clamp to sane max to prevent int overflow in buffer size calc */
-					if (width > MAX_PORT_WIDTH)
-						width = MAX_PORT_WIDTH;
-					if (height > MAX_PORT_HEIGHT)
-						height = MAX_PORT_HEIGHT;
+					if (width <= 0 || width > MAX_PORT_WIDTH ||
+					    height <= 0 || height > MAX_PORT_HEIGHT) {
+						GTP_LOG_ERROR(state,
+							      GVM_TOUCH_LOG_PREFIX
+							      "Warning: invalid geometry for Display(device=%u,id=%u,node=%u): width=%d height=%d; trying VideoMode fallback\n",
+							      display_device_id, display_id,
+							      dnode_id, width, height);
+						width = 0;
+						height = 0;
+					}
 
 					for (int i = 0; i < state->port_count; i++) {
 						PortInfo *p = &state->ports[i];
 
-						if (p->display_node == dnode_id) {
+						if (p->device_id == display_device_id &&
+						    p->display_id == display_id &&
+						    p->display_node == dnode_id &&
+						    (p->width <= 0 || p->height <= 0) &&
+						    width > 0 && height > 0) {
 							p->offset_x = offset_x;
 							p->offset_y = offset_y;
-							if (width > 0)
-								p->width = width;
-							if (height > 0)
-								p->height = height;
+							p->width = width;
+							p->height = height;
 						}
 					}
 
@@ -760,6 +969,63 @@ parse_xml_config(const char *filename, struct client_state *state)
 					if (vh)
 						xmlFree(vh);
 				}
+			}
+
+			/* Use the first supported valid VideoMode only for ports still
+			 * unresolved after INI and DisplayNode processing. */
+			for (xmlNode *mode = node->children; mode; mode = mode->next) {
+				xmlChar *supported;
+				xmlChar *active_h;
+				xmlChar *active_v;
+				int width;
+				int height;
+
+				if (mode->type != XML_ELEMENT_NODE ||
+				    strcmp((char *) mode->name, "VideoMode") != 0)
+					continue;
+
+				supported = xmlGetProp(mode, (xmlChar *) "bSupported");
+				if (!supported || atoi((char *) supported) != 1) {
+					if (supported)
+						xmlFree(supported);
+					continue;
+				}
+				xmlFree(supported);
+
+				active_h = xmlGetProp(mode, (xmlChar *) "uActiveH");
+				active_v = xmlGetProp(mode, (xmlChar *) "uActiveV");
+				width = active_h ? atoi((char *) active_h) : 0;
+				height = active_v ? atoi((char *) active_v) : 0;
+				if (active_h)
+					xmlFree(active_h);
+				if (active_v)
+					xmlFree(active_v);
+
+				if (width <= 0 || width > MAX_PORT_WIDTH ||
+				    height <= 0 || height > MAX_PORT_HEIGHT) {
+					GTP_LOG_ERROR(state,
+						      GVM_TOUCH_LOG_PREFIX
+						      "Warning: invalid supported VideoMode for Display(device=%u,id=%u): width=%d height=%d; ignoring\n",
+						      display_device_id, display_id,
+						      width, height);
+					continue;
+				}
+
+				for (int i = 0; i < state->port_count; i++) {
+					PortInfo *p = &state->ports[i];
+
+					if (p->device_id != display_device_id ||
+					    p->display_id != display_id ||
+					    (p->width > 0 && p->height > 0))
+						continue;
+
+					p->offset_x = 0;
+					p->offset_y = 0;
+					p->width = width;
+					p->height = height;
+				}
+
+				break;
 			}
 		}
 	}
@@ -862,8 +1128,6 @@ gtp_link_ports(struct client_state *state)
 			      shared_without_host);
 	}
 
-	for (i = 0; i < state->port_count; i++)
-		gtp_resolve_port_geometry(state, &state->ports[i]);
 }
 
 int
@@ -1196,7 +1460,8 @@ calculate_zorder(struct client_state *state)
 		GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX "\nHost Port: %s\n", hp->cport_name);
 		GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX "  Z-order: base=%d, size=%d\n",
 			     hp->zorder_base, hp->zorder_size);
-		GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX "  Geometry: x=%d, y=%d, w=%d, h=%d\n",
+		GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX
+			     "  Geometry: x=%d, y=%d, w=%d, h=%d\n",
 			     hp->offset_x, hp->offset_y, hp->width, hp->height);
 
 		for (int j = 0; j < state->port_count; j++) {
@@ -1225,7 +1490,8 @@ calculate_zorder(struct client_state *state)
 				     sp->ivi_surface_id);
 			GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX "      IVI Layer ID: %u\n",
 				     sp->ivi_layer_id);
-			GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX "      Geometry: x=%d, y=%d, w=%d, h=%d\n",
+			GTP_LOG_INFO(state, GVM_TOUCH_LOG_PREFIX
+				     "      Geometry: x=%d, y=%d, w=%d, h=%d\n",
 				     sp->offset_x, sp->offset_y, sp->width, sp->height);
 		}
 	}
@@ -1265,11 +1531,19 @@ setup_uinput(PortInfo *port)
 	if (!port)
 		return -1;
 
+	max_x = port->width;
+	max_y = port->height;
+	if (max_x <= 0 || max_y <= 0) {
+		GTP_LOG_ERROR(NULL,
+			      GVM_TOUCH_LOG_PREFIX
+			      "UINPUT: unresolved geometry for %s (%dx%d)\n",
+			      port->cport_name[0] ? port->cport_name : port->output_name,
+			      max_x, max_y);
+		return -1;
+	}
+
 	if (port->uinput_fd >= 0)
 		return port->uinput_fd;
-
-	max_x = port->width > 0 ? port->width : 1920;
-	max_y = port->height > 0 ? port->height : 1080;
 
 	port_name = port->cport_name[0] ? port->cport_name : port->output_name;
 
@@ -1349,8 +1623,6 @@ setup_shared_port_uinputs(struct client_state *state)
 
 		if (port->port_type != PORT_TYPE_SHARED)
 			continue;
-
-		gtp_resolve_port_geometry(state, port);
 
 		if (setup_uinput(port) < 0) {
 			GTP_LOG_ERROR(state,
@@ -2386,8 +2658,10 @@ create_port_buffer(struct client_state *state, PortInfo *port)
 	if (port->buffer)
 		return true;
 
-	width = port->width > 0 ? port->width : 1;
-	height = port->height > 0 ? port->height : 1;
+	width = port->width;
+	height = port->height;
+	if (width <= 0 || height <= 0)
+		return false;
 	stride = width * 4;
 	size = stride * height;
 
@@ -2651,7 +2925,12 @@ gtp_wayland_session_init(struct client_state *state)
 		return false;
 	}
 
-	create_surfaces(state);
+	if (!create_surfaces(state)) {
+		GTP_LOG_ERROR(state, GVM_TOUCH_LOG_PREFIX
+			      "Failed to create one or more shared port surfaces\n");
+		gtp_wayland_session_teardown(state);
+		return false;
+	}
 
 	if (wl_display_roundtrip(state->display) == -1) {
 		GTP_LOG_ERROR(state, GVM_TOUCH_LOG_PREFIX
@@ -3042,8 +3321,6 @@ setup_ivi_window_management(struct client_state *state)
 				continue;
 			}
 
-			gtp_resolve_port_geometry(state, sp);
-
 			ivi_wm_create_layout_layer(state->ivi_wm,
 						   sp->ivi_layer_id,
 						   sp->width,
@@ -3140,16 +3417,21 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 	.configure = xdg_surface_handle_configure,
 };
 
-static void
+static bool
 create_surfaces(struct client_state *state)
 {
 	int i;
+
+	if (!state || !state->compositor) {
+		GTP_LOG_ERROR(state, GVM_TOUCH_LOG_PREFIX
+			      "Error: wl_compositor is unavailable\n");
+		return false;
+	}
 
 	for (i = 0; i < state->port_count; i++) {
 		PortInfo *port = &state->ports[i];
 
 		port->state_ref = state;
-		gtp_resolve_port_geometry(state, port);
 
 		/* HOST ports have no surface in any mode:
 		 * - IVI-shell: managed via ivi_wm screen/layer only
@@ -3160,6 +3442,13 @@ create_surfaces(struct client_state *state)
 
 		/* SHARED ports only from here */
 		port->surface = wl_compositor_create_surface(state->compositor);
+		if (!port->surface) {
+			GTP_LOG_ERROR(state,
+				      GVM_TOUCH_LOG_PREFIX
+				      "Error: failed to create surface for %s\n",
+				      port->cport_name);
+			return false;
+		}
 
 		/* Input region covers the shared port's full area. */
 		{
@@ -3205,7 +3494,7 @@ create_surfaces(struct client_state *state)
 							  : port->output_name);
 			wl_surface_destroy(port->surface);
 			port->surface = NULL;
-			continue;
+			return false;
 		}
 
 		if (state->use_ivi_shell && port->ivi_surface_id > 0) {
@@ -3213,6 +3502,15 @@ create_surfaces(struct client_state *state)
 			port->ivi_surface = ivi_application_surface_create(
 				state->ivi_app, port->ivi_surface_id,
 				port->surface);
+			if (!port->ivi_surface) {
+				GTP_LOG_ERROR(state,
+					      GVM_TOUCH_LOG_PREFIX
+					      "Error: failed to create IVI surface for %s (ID=%u)\n",
+					      port->cport_name,
+					      port->ivi_surface_id);
+				return false;
+			}
+
 			GTP_LOG_INFO(state,
 				     GVM_TOUCH_LOG_PREFIX
 				     ">>> Created IVI Surface: %s (ID=%u, %dx%d)\n",
@@ -3245,10 +3543,19 @@ create_surfaces(struct client_state *state)
 					port->xdg_toplevel =
 						xdg_surface_get_toplevel(
 							port->xdg_surface);
-					xdg_toplevel_set_title(
-						port->xdg_toplevel,
-						port->cport_name);
+					if (port->xdg_toplevel)
+						xdg_toplevel_set_title(
+							port->xdg_toplevel,
+							port->cport_name);
 				}
+			}
+
+			if (!port->xdg_surface || !port->xdg_toplevel) {
+				GTP_LOG_ERROR(state,
+					      GVM_TOUCH_LOG_PREFIX
+					      "Error: failed to create XDG role for %s\n",
+					      port->cport_name);
+				return false;
 			}
 
 			/* Initial commit with no buffer triggers the configure event. */
@@ -3262,6 +3569,8 @@ create_surfaces(struct client_state *state)
 
 	if (state->display)
 		wl_display_flush(state->display);
+
+	return true;
 }
 
 /* --- Main --- */
@@ -3335,8 +3644,19 @@ main(int argc, char **argv)
 	if (!gtp_validate_shared_port_configuration(&state))
 		return -1;
 
+	if (!gtp_resolve_static_port_geometries(&state)) {
+		GTP_LOG_ERROR(&state, GVM_TOUCH_LOG_PREFIX
+			      "Error: Failed to resolve static port geometry from shared_touch.ini/qcdisplaycfg.xml. Exiting.\n");
+		return -1;
+	}
+
+	/* Z-order and geometry are static configuration. Log them once after
+	 * geometry resolution instead of on every Wayland reconnect. */
 	calculate_zorder(&state);
 
+	/* No Wayland connection/output exists yet. uinput must be available for
+	 * qcrosvm independently of Weston, so its geometry comes only from the
+	 * static INI/XML resolution above. */
 	if (!setup_shared_port_uinputs(&state))
 		return -1;
 
