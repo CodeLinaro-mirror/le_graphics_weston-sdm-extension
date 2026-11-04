@@ -2706,6 +2706,9 @@ drm_head_create(struct drm_backend *backend, uint32_t display_id,
 	if (!name)
 		goto err_alloc;
 
+	weston_log("SDM-BACKEND: Weston output name '%s' for display_id=%u, connector_id=%d\n",
+			name, display_id, connector_id);
+
 	weston_head_init(&head->base, name);
 
 	head->display_id = display_id;
@@ -2766,6 +2769,9 @@ drm_head_create_early(struct drm_backend *backend, uint32_t display_id,struct Ea
 	name = display_config->name;
 	if (!name)
 		goto err_alloc;
+
+	weston_log("SDM-BACKEND: Weston output name '%s' for display_id=%u (early display)\n",
+			name, display_id);
 
 	weston_head_init(&head->base, name);
 

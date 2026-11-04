@@ -67,6 +67,7 @@
 #include <bitset>
 #include <math.h>
 #include <time.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -360,6 +361,55 @@ DisplayError SdmDisplay::GetDisplayConfiguration(struct DisplayConfigInfo *displ
   display_config->vsync_period_ns = disp_config.vsync_period_ns;
   display_config->is_yuv       = disp_config.is_yuv;
   fps_                         = disp_config.fps;
+
+  return kErrorNone;
+}
+
+DisplayError SdmDisplay::GetDisplayName(std::string *panel_name) {
+  DisplayError error = kErrorNone;
+  uint8_t port = 0;
+  uint32_t edid_size = 0;
+  std::vector<uint8_t> edid;
+
+  if (!panel_name) {
+    return kErrorParameters;
+  }
+
+  error = display_intf_->GetDisplayIdentificationData(&port, &edid_size, nullptr);
+  if (error != kErrorNone || edid_size < 128) {
+    return kErrorNotSupported;
+  }
+
+  edid.resize(edid_size);
+  error = display_intf_->GetDisplayIdentificationData(&port, &edid_size, edid.data());
+  if (error != kErrorNone) {
+    return error;
+  }
+
+  /* Parse the EDID Display Product Name descriptor (tag 0xFC), same
+   * layout compositor-sdm.c's edid_parse() reads. */
+  for (uint32_t i = 0x36; (i + 18) <= edid_size && i <= 0x6c; i += 18) {
+    if (edid[i] != 0 || edid[i + 2] != 0 || edid[i + 3] != 0xfc) {
+      continue;
+    }
+
+    char name[13] = {0};
+    memcpy(name, &edid[i + 5], 13);
+    for (int k = 0; k < 13; k++) {
+      if (name[k] == '\n' || name[k] == '\r') {
+        name[k] = '\0';
+        break;
+      }
+      if (!isprint(static_cast<unsigned char>(name[k]))) {
+        name[k] = '\0';
+        break;
+      }
+    }
+    if (name[0] != '\0') {
+      *panel_name = name;
+    }
+    break;
+  }
 
   return kErrorNone;
 }
