@@ -3247,6 +3247,10 @@ drm_destroy(struct weston_backend *backend)
 	udev_input_destroy(&b->input);
 
 	wl_event_source_remove(b->udev_drm_source);
+	udev_monitor_unref(b->udev_monitor);
+	b->udev_monitor = NULL;
+	udev_unref(b->udev);
+	b->udev = NULL;
 	weston_log_scope_destroy(b->debug);
 	b->debug = NULL;
 	//TODO(user): Need to destroy the display device here
@@ -3258,8 +3262,7 @@ drm_destroy(struct weston_backend *backend)
 	if (sdm_service)
 		sdm_service->DestroyCore();
 	unload_touch_only_surface_module();
-	if(b->early_boot)
-		early_drm_display_deinit(true, b->drm.fd);
+	early_drm_display_deinit(true, b->drm.fd);
 
 	if (b->gbm)
 		gbm_device_destroy(b->gbm);

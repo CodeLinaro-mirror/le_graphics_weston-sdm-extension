@@ -805,6 +805,9 @@ void early_drm_display_deinit(bool destroy, int drm_fd) {
     DRMLibLoader *drm_lib_loader = DRMLibLoader::GetInstance(card_id_);
     if (drm_lib_loader && drm_lib_loader->FuncDestroyDRMManager())
       drm_lib_loader->FuncDestroyDRMManager()(drm_fd);
+    /* SDM DestroyCore() may already have destroyed the loader; GetInstance()
+     * above then re-creates it, so release it here to avoid leaking it. */
+    DRMLibLoader::Destroy(card_id_);
   }
   drm_mgr_intf_ = nullptr;
   plane_list.clear();
